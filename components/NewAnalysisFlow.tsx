@@ -8,7 +8,7 @@ import {
 import { extractIdentityFromRUT } from '../services/gemini';
 
 interface NewAnalysisFlowProps {
-  onComplete: (analysis: CreditAnalysis) => void;
+  onComplete: (analysis: CreditAnalysis) => Promise<void>; // Updated to Promise for async waiting
   onCancel?: () => void;
 }
 
@@ -78,9 +78,7 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
     if (!isFormValid) return;
 
     setLoading(true);
-    // Simulate upload delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
-
+    
     // Create the object in 'PENDIENTE_CARTERA' state
     const newAnalysis: CreditAnalysis = {
       id: `SOL-${Date.now().toString().slice(-6)}`,
@@ -93,7 +91,15 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
       riskFiles: { datacredito: null, informa: null }
     };
 
-    onComplete(newAnalysis);
+    try {
+        // Wait for the parent to process AI and Cloud Upload
+        await onComplete(newAnalysis);
+    } catch (error) {
+        setErrorMsg("Error al procesar la solicitud. Intente nuevamente.");
+        console.error(error);
+    } finally {
+        setLoading(false);
+    }
   };
 
   return (
@@ -195,8 +201,7 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
             disabled={loading || !isFormValid}
             className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black hover:bg-slate-800 disabled:bg-slate-200 transition-all uppercase tracking-widest text-xs flex items-center justify-center gap-3 shadow-lg disabled:shadow-none mt-8"
           >
-            {loading ? <Loader2 className="animate-spin" /> : <Send size={18} />}
-            {loading ? "Enviando a Cartera..." : "Finalizar y Notificar a Cartera"}
+            {loading ? <div className="flex items-center gap-2"><Loader2 className="animate-spin" /> <span>Analizando & Subiendo...</span></div> : <div className="flex items-center gap-2"><Send size={18} /> <span>Finalizar y Notificar</span></div>}
           </button>
         </form>
       </div>

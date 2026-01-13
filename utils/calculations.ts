@@ -30,6 +30,16 @@ export const redondearComercial = (monto: number): number => {
   }
 };
 
+export const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    // Retornamos solo la parte base64, sin el prefijo data:mime...
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
+    reader.onerror = error => reject(error);
+  });
+};
+
 export const calculateFullIndicators = (data: any): FinancialIndicators => {
   const razonCorriente = data.assetsCorriente / data.pasivosCorriente;
   const pruebaAcida = (data.assetsCorriente - data.inventarios) / data.pasivosCorriente;

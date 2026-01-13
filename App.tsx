@@ -11,6 +11,8 @@ import PINModal from './components/PINModal';
 import SuccessView from './components/SuccessView';
 import { runFullCreditAnalysis } from './services/gemini';
 import { sendEmail } from './services/email';
+import { saveAnalysisToCloud } from './services/server';
+import { fileToBase64 } from './utils/calculations';
 import CommercialDashboard from './components/CommercialDashboard';
 
 // Mock Data for Demo
@@ -23,6 +25,7 @@ const App: React.FC = () => {
   const [analyses, setAnalyses] = useState<CreditAnalysis[]>(MOCK_DB);
   const [selectedAnalysis, setSelectedAnalysis] = useState<CreditAnalysis | null>(null);
   const [loadingAI, setLoadingAI] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   // Global Configuration State
   // Default set to requested email
@@ -34,27 +37,78 @@ const App: React.FC = () => {
     else setRole(r);
   };
 
-  // 1. Comercial Flow: Submit New Request -> Triggers Notification to Cartera
+  // 1. Comercial Flow: Submit New Request -> AI Analysis -> Cloud Upload -> Notification
   const handleCommercialSubmit = async (newAnalysis: CreditAnalysis) => {
-    setAnalyses(prev => [newAnalysis, ...prev]);
-    
-    // Trigger Email Notification to Cartera (dsanchez@equitel.com.co)
-    const subject = `Nueva Solicitud de Crédito: ${newAnalysis.clientName}`;
-    const body = `
-      <h3>Nueva Solicitud Creada</h3>
-      <p>El asesor comercial <strong>${newAnalysis.comercial.name}</strong> ha cargado una nueva solicitud.</p>
-      <ul>
-        <li><strong>Cliente:</strong> ${newAnalysis.clientName}</li>
-        <li><strong>NIT:</strong> ${newAnalysis.nit}</li>
-        <li><strong>Fecha:</strong> ${newAnalysis.date}</li>
-      </ul>
-      <p>Por favor ingrese al portal Estefanía 2.0 con el rol "Analista Cartera" para completar la documentación de riesgo.</p>
-    `;
+    setUploading(true);
+    try {
+      // A. Extract files for AI Analysis
+      const filesForAI = Object.values(newAnalysis.commercialFiles).filter(f => f !== null) as File[];
+      
+      // B. Run AI Analysis (Preliminary)
+      const aiResult = await runFullCreditAnalysis(filesForAI, newAnalysis.clientName, newAnalysis.nit);
 
-    // Fire and forget (don't block UI)
-    sendEmail(notificationEmails, subject, body).catch(console.error);
+      // C. Prepare Files for Cloud (Convert to Base64)
+      // Map commercialFiles object to array of { name, mimeType, fileContent }
+      const filesToUpload = await Promise.all(
+        Object.entries(newAnalysis.commercialFiles).map(async ([key, file]) => {
+          if (!file) return null;
+          return {
+            nombre: `${key}_${file.name}`,
+            mimeType: file.type,
+            fileContent: await fileToBase64(file)
+          };
+        })
+      );
+      
+      const cleanFilesToUpload = filesToUpload.filter(f => f !== null);
 
-    setView('SUCCESS');
+      // D. Construct Payload for GAS
+      const payload = {
+        datosCliente: {
+          id: newAnalysis.id,
+          razonSocial: newAnalysis.clientName,
+          nit: newAnalysis.nit,
+          comercialNombre: newAnalysis.comercial.name,
+          comercialEmail: newAnalysis.comercial.email,
+          fecha: newAnalysis.date,
+          estado: newAnalysis.status
+        },
+        archivos: cleanFilesToUpload,
+        analisis: aiResult
+      };
+
+      // E. Send to Cloud
+      await saveAnalysisToCloud(payload);
+
+      // F. Update Local State (add AI result to the analysis object internally for continuity)
+      const enrichedAnalysis: CreditAnalysis = {
+        ...newAnalysis,
+        aiResult: aiResult // Store preliminary AI result if needed
+      };
+
+      setAnalyses(prev => [enrichedAnalysis, ...prev]);
+
+      // G. Trigger Notification (Legacy method, backend might handle this too but keeping it for UI feedback)
+      const subject = `Nueva Solicitud de Crédito: ${newAnalysis.clientName}`;
+      const body = `
+        <h3>Nueva Solicitud Creada</h3>
+        <p>El asesor comercial <strong>${newAnalysis.comercial.name}</strong> ha cargado una nueva solicitud y se ha guardado en Drive.</p>
+        <ul>
+          <li><strong>Cliente:</strong> ${newAnalysis.clientName}</li>
+          <li><strong>NIT:</strong> ${newAnalysis.nit}</li>
+        </ul>
+      `;
+      sendEmail(notificationEmails, subject, body).catch(console.error);
+
+      setView('SUCCESS');
+
+    } catch (error: any) {
+      alert("Error en el proceso de carga: " + error.message);
+      console.error(error);
+      throw error; // Re-throw so NewAnalysisFlow knows it failed
+    } finally {
+      setUploading(false);
+    }
   };
 
   // 2. Cartera Flow: Advance Request
@@ -127,11 +181,20 @@ const App: React.FC = () => {
   return (
     <Layout role={role} onReset={() => { setRole(null); setView('LIST'); }}>
       
+      {/* GLOBAL LOADING OVERLAYS */}
       {loadingAI && (
         <div className="fixed inset-0 bg-slate-900/80 z-[200] flex flex-col items-center justify-center text-white">
           <div className="w-16 h-16 border-4 border-equitel-red border-t-transparent rounded-full animate-spin mb-4"></div>
           <h2 className="text-2xl font-black uppercase tracking-widest">Ejecutando Análisis One-Shot</h2>
           <p className="text-slate-400 mt-2">Cruzando variables financieras y de riesgo...</p>
+        </div>
+      )}
+
+      {uploading && (
+        <div className="fixed inset-0 bg-slate-900/90 z-[200] flex flex-col items-center justify-center text-white">
+          <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+          <h2 className="text-2xl font-black uppercase tracking-widest">Sincronizando con la Nube</h2>
+          <p className="text-blue-300 mt-2">Guardando archivos en Google Drive y registrando datos...</p>
         </div>
       )}
 
