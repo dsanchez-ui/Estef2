@@ -12,6 +12,20 @@ export interface CommercialMember {
   email: string;
 }
 
+export interface DocumentValidation {
+  fileName: string;
+  isValid: boolean;
+  issue?: string; // e.g., "Vencido (>90 días)", "NIT no coincide"
+  detectedDate?: string;
+}
+
+export interface ValidationResult {
+  overallValid: boolean;
+  results: DocumentValidation[];
+  summary: string;
+  rawData?: any; // Stores the full structured JSON from the AI analysis
+}
+
 export interface FinancialIndicators {
   razonCorriente: number;
   pruebaAcida: number;
@@ -86,12 +100,15 @@ export interface CreditAnalysis {
     suggestedCupo: number;
     justification: string;
     scoreProbability: number; // 0-1
-    indicators: FinancialIndicators;
+    financialIndicators: FinancialIndicators;
     flags: {
       green: string[];
       red: string[];
     };
   };
+
+  // Validation Result from Commercial Step
+  validationResult?: ValidationResult;
 
   // Enriched Fields for UI
   indicators?: FinancialIndicators;

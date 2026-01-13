@@ -37,21 +37,17 @@ const App: React.FC = () => {
     else setRole(r);
   };
 
-  // 1. Comercial Flow: Submit New Request -> AI Analysis -> Cloud Upload -> Notification
+  // 1. Comercial Flow: Submit New Request -> Cloud Upload -> Notification
+  // Note: Validation is now handled inside NewAnalysisFlow component before calling this.
   const handleCommercialSubmit = async (newAnalysis: CreditAnalysis) => {
     setUploading(true);
     try {
-      // A. Extract files for AI Analysis
-      const filesForAI = Object.values(newAnalysis.commercialFiles).filter(f => f !== null) as File[];
-      
-      // B. Run AI Analysis (Preliminary)
-      const aiResult = await runFullCreditAnalysis(filesForAI, newAnalysis.clientName, newAnalysis.nit);
+      console.log("Iniciando carga en Nube...");
 
       // C. Prepare Files for Cloud (Convert to Base64)
-      // Map commercialFiles object to array of { name, mimeType, fileContent }
       const filesToUpload = await Promise.all(
         Object.entries(newAnalysis.commercialFiles).map(async ([key, file]) => {
-          if (!file) return null;
+          if (!file || !(file instanceof File)) return null;
           return {
             nombre: `${key}_${file.name}`,
             mimeType: file.type,
@@ -63,6 +59,7 @@ const App: React.FC = () => {
       const cleanFilesToUpload = filesToUpload.filter(f => f !== null);
 
       // D. Construct Payload for GAS
+      // We send the 'validationResult' which was added to newAnalysis in the child component
       const payload = {
         datosCliente: {
           id: newAnalysis.id,
@@ -74,21 +71,16 @@ const App: React.FC = () => {
           estado: newAnalysis.status
         },
         archivos: cleanFilesToUpload,
-        analisis: aiResult
+        validation: newAnalysis.validationResult // Store the validation proof
       };
 
       // E. Send to Cloud
       await saveAnalysisToCloud(payload);
 
-      // F. Update Local State (add AI result to the analysis object internally for continuity)
-      const enrichedAnalysis: CreditAnalysis = {
-        ...newAnalysis,
-        aiResult: aiResult // Store preliminary AI result if needed
-      };
+      // F. Update Local State 
+      setAnalyses(prev => [newAnalysis, ...prev]);
 
-      setAnalyses(prev => [enrichedAnalysis, ...prev]);
-
-      // G. Trigger Notification (Legacy method, backend might handle this too but keeping it for UI feedback)
+      // G. Trigger Notification
       const subject = `Nueva Solicitud de Crédito: ${newAnalysis.clientName}`;
       const body = `
         <h3>Nueva Solicitud Creada</h3>
@@ -103,9 +95,9 @@ const App: React.FC = () => {
       setView('SUCCESS');
 
     } catch (error: any) {
-      alert("Error en el proceso de carga: " + error.message);
+      alert("Error crítico al subir: " + error.message);
       console.error(error);
-      throw error; // Re-throw so NewAnalysisFlow knows it failed
+      throw error; 
     } finally {
       setUploading(false);
     }
@@ -113,19 +105,55 @@ const App: React.FC = () => {
 
   // 2. Cartera Flow: Advance Request
   const handleCarteraAdvance = (updated: CreditAnalysis) => {
-    setAnalyses(prev => prev.map(a => a.id === updated.id ? updated : a));
+    // Preserve existing data (like commercialFiles and aiResult) while updating status and riskFiles
+    setAnalyses(prev => prev.map(a => a.id === updated.id ? { ...a, ...updated } : a));
     setView('SUCCESS');
   };
 
   // 3. Director Flow: Run AI Analysis
   const handleDirectorOpen = async (analysis: CreditAnalysis) => {
-    if (analysis.status === 'PENDIENTE_DIRECTOR' && !analysis.aiResult) {
+    // PERSISTENCE CHECK:
+    // If we already have the AI result (from Commercial flow or previous Director run), 
+    // DO NOT re-run the AI. Load the existing data directly from state/database.
+    if (analysis.aiResult) {
+       console.log("Cargando análisis existente de base de datos local...");
+       
+       // Ensure the analysis object is fully populated for the view
+       const readyAnalysis: CreditAnalysis = {
+         ...analysis,
+         status: analysis.status === 'PENDIENTE_DIRECTOR' ? 'ANALIZADO' : analysis.status,
+         indicators: analysis.indicators || analysis.aiResult.financialIndicators,
+         cupo: analysis.cupo || { 
+            resultadoPromedio: analysis.aiResult.suggestedCupo, 
+            plazoRecomendado: analysis.aiResult.financialIndicators.cicloOperacional > 60 ? 45 : 30 
+         },
+         riskLevel: analysis.riskLevel || (analysis.aiResult.scoreProbability > 0.5 ? 'ALTO' : 'BAJO'),
+         moraProbability: analysis.moraProbability || (analysis.aiResult.scoreProbability * 100).toFixed(1) + '%',
+         flags: analysis.flags || analysis.aiResult.flags
+       };
+       
+       // Update state to reflect 'ANALIZADO' if it was pending
+       if (analysis.status === 'PENDIENTE_DIRECTOR') {
+          setAnalyses(prev => prev.map(a => a.id === analysis.id ? readyAnalysis : a));
+       }
+       
+       setSelectedAnalysis(readyAnalysis);
+       setView('DETAIL');
+       return;
+    }
+
+    // If NO result exists (e.g. legacy data or error), run AI on available files
+    if (analysis.status === 'PENDIENTE_DIRECTOR' || analysis.status === 'ANALIZADO') {
       setLoadingAI(true);
       try {
         const allFiles = [
-            ...Object.values(analysis.commercialFiles), 
-            ...Object.values(analysis.riskFiles)
-        ].filter(f => f !== null) as File[];
+            ...Object.values(analysis.commercialFiles || {}), 
+            ...Object.values(analysis.riskFiles || {})
+        ].filter((f): f is File => f instanceof File);
+
+        if (allFiles.length === 0) {
+            throw new Error("No hay archivos cargados en memoria para analizar.");
+        }
 
         const aiResult = await runFullCreditAnalysis(allFiles, analysis.clientName, analysis.nit);
         
@@ -140,7 +168,7 @@ const App: React.FC = () => {
           riskLevel: aiResult.scoreProbability > 0.5 ? 'ALTO' : 'BAJO',
           moraProbability: (aiResult.scoreProbability * 100).toFixed(1) + '%',
           flags: aiResult.flags,
-          aiResult: aiResult
+          aiResult: aiResult // Save result for persistence
         };
 
         setAnalyses(prev => prev.map(a => a.id === analysis.id ? analyzedAnalysis : a));
@@ -149,6 +177,7 @@ const App: React.FC = () => {
 
       } catch (e: any) {
         alert("Error ejecutando IA: " + e.message);
+        console.error(e);
       } finally {
         setLoadingAI(false);
       }
@@ -194,7 +223,7 @@ const App: React.FC = () => {
         <div className="fixed inset-0 bg-slate-900/90 z-[200] flex flex-col items-center justify-center text-white">
           <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
           <h2 className="text-2xl font-black uppercase tracking-widest">Sincronizando con la Nube</h2>
-          <p className="text-blue-300 mt-2">Guardando archivos en Google Drive y registrando datos...</p>
+          <p className="text-blue-300 mt-2">Carga Segura a Google Drive</p>
         </div>
       )}
 

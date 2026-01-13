@@ -10,6 +10,23 @@ interface LayoutProps {
 }
 
 const Layout: React.FC<LayoutProps> = ({ children, role, onReset }) => {
+  
+  // Dynamic User Profile based on Role
+  const getUserProfile = () => {
+    switch (role) {
+      case UserRole.DIRECTOR:
+        return { name: "John Deyver", title: "Director Nacional" };
+      case UserRole.CARTERA:
+        return { name: "Analista Cartera", title: "Operaciones" };
+      case UserRole.COMERCIAL:
+        return { name: "Asesor Comercial", title: "Ventas" };
+      default:
+        return { name: "Usuario", title: "Invitado" };
+    }
+  };
+
+  const userProfile = getUserProfile();
+
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       <aside className="w-64 bg-slate-900 text-white hidden md:flex flex-col">
@@ -40,8 +57,8 @@ const Layout: React.FC<LayoutProps> = ({ children, role, onReset }) => {
               <ShieldCheck size={16} className="text-slate-400" />
             </div>
             <div>
-              <p className="text-xs font-bold text-white leading-none">John Deyver</p>
-              <p className="text-[8px] font-bold text-slate-500 uppercase mt-1">{role}</p>
+              <p className="text-xs font-bold text-white leading-none">{userProfile.name}</p>
+              <p className="text-[8px] font-bold text-slate-500 uppercase mt-1">{userProfile.title}</p>
             </div>
           </div>
           <button 

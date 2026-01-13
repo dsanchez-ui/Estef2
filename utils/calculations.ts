@@ -32,6 +32,11 @@ export const redondearComercial = (monto: number): number => {
 
 export const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
+    // GUARD: Ensure input is actually a Blob/File to prevent FileReader crash
+    if (!file || !(file instanceof Blob)) {
+        reject(new Error("Param is not a valid File or Blob"));
+        return;
+    }
     const reader = new FileReader();
     reader.readAsDataURL(file);
     // Retornamos solo la parte base64, sin el prefijo data:mime...
