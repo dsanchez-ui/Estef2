@@ -1,0 +1,7 @@
+{
+  "name": "Estefanía 2.0 - Análisis de Crédito Equitel",
+  "description": "Sistema avanzado de análisis financiero y scoring de crédito para Equitel. Procesa documentos financieros, calcula 19 indicadores clave y determina cupos de crédito mediante un workflow riguroso.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

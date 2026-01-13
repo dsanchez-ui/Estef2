@@ -1,0 +1,98 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Estefanía 2.0 - Análisis de Crédito</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+        }
+        /* Cummins/Equitel Colors */
+        .bg-equitel-red { background-color: #DA291C; }
+        .text-equitel-red { color: #DA291C; }
+        .border-equitel-red { border-color: #DA291C; }
+
+        @media print {
+            @page {
+                margin: 0;
+                size: auto;
+            }
+            body {
+                visibility: hidden;
+                background-color: white;
+                margin: 0;
+                padding: 0;
+            }
+            /* Ocultar elementos específicos que no se deben imprimir */
+            .no-print {
+                display: none !important;
+            }
+            /* Configuración del contenedor del reporte */
+            #printable-report-container {
+                visibility: visible !important;
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                height: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                background-color: white !important;
+                z-index: 9999 !important;
+                overflow: visible !important;
+            }
+            /* Asegurar que todos los hijos del reporte sean visibles */
+            #printable-report-container * {
+                visibility: visible !important;
+            }
+            /* Ajustes para la hoja de papel en modo impresión */
+            .print-paper {
+                margin: 0 !important;
+                padding: 1.5cm !important; /* Margen estándar para documentos */
+                box-shadow: none !important;
+                max-width: 100% !important;
+                min-height: auto !important;
+                width: 100% !important;
+                margin-top: 0 !important; /* Force no top margin */
+            }
+            .no-print-margin {
+                margin-top: 0 !important;
+            }
+            /* Ajustes de color para impresión */
+            .print-force-text-dark {
+                color: #1a202c !important; /* Force dark slate/black */
+            }
+            .print-force-bg-gray {
+                background-color: #f1f5f9 !important; /* Force light gray bg */
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            .page-break {
+                page-break-before: always;
+            }
+            .avoid-break {
+                page-break-inside: avoid;
+            }
+        }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0"
+  }
+}
+</script>
+</head>
+<body>
+    <div id="root"></div>
+</body>
+</html>
