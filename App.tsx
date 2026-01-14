@@ -38,18 +38,17 @@ const App: React.FC = () => {
   };
 
   // 1. Comercial Flow: Submit New Request -> Cloud Upload -> Notification
-  // Note: Validation is now handled inside NewAnalysisFlow component before calling this.
   const handleCommercialSubmit = async (newAnalysis: CreditAnalysis) => {
     setUploading(true);
     try {
-      console.log("Iniciando carga en Nube...");
+      console.log("Iniciando carga en Nube (Comercial)...");
 
       // C. Prepare Files for Cloud (Convert to Base64)
       const filesToUpload = await Promise.all(
         Object.entries(newAnalysis.commercialFiles).map(async ([key, file]) => {
           if (!file || !(file instanceof File)) return null;
           return {
-            nombre: `${key}_${file.name}`,
+            nombre: `COMERCIAL_${key}_${file.name}`,
             mimeType: file.type,
             fileContent: await fileToBase64(file)
           };
@@ -59,11 +58,10 @@ const App: React.FC = () => {
       const cleanFilesToUpload = filesToUpload.filter(f => f !== null);
 
       // D. Construct Payload for GAS
-      // We send the 'validationResult' which was added to newAnalysis in the child component
       const payload = {
         datosCliente: {
           id: newAnalysis.id,
-          razonSocial: newAnalysis.clientName,
+          clientName: newAnalysis.clientName, // Ensure clientName matches GAS expectations
           nit: newAnalysis.nit,
           comercialNombre: newAnalysis.comercial.name,
           comercialEmail: newAnalysis.comercial.email,
@@ -71,16 +69,23 @@ const App: React.FC = () => {
           estado: newAnalysis.status
         },
         archivos: cleanFilesToUpload,
-        validation: newAnalysis.validationResult // Store the validation proof
+        validation: newAnalysis.validationResult
       };
 
-      // E. Send to Cloud
-      await saveAnalysisToCloud(payload);
+      // E. Send to Cloud & Get Folder ID
+      const response = await saveAnalysisToCloud(payload);
+      
+      // Update analysis with the returned folder ID so Cartera can use it later
+      // The GAS script must return { success: true, folderId: "...", urlCarpeta: "..." }
+      const analysisWithFolder = {
+        ...newAnalysis,
+        driveFolderId: response.folderId || undefined 
+      };
 
       // F. Update Local State 
-      setAnalyses(prev => [newAnalysis, ...prev]);
+      setAnalyses(prev => [analysisWithFolder, ...prev]);
 
-      // G. Trigger Notification
+      // G. Trigger Notification (Frontend Simulation)
       const subject = `Nueva Solicitud de Crédito: ${newAnalysis.clientName}`;
       const body = `
         <h3>Nueva Solicitud Creada</h3>
@@ -92,29 +97,68 @@ const App: React.FC = () => {
       `;
       sendEmail(notificationEmails, subject, body).catch(console.error);
 
+      // Store ID in selectedAnalysis so SuccessView can show it
+      setSelectedAnalysis(analysisWithFolder);
       setView('SUCCESS');
 
     } catch (error: any) {
       alert("Error crítico al subir: " + error.message);
       console.error(error);
-      throw error; 
+      // We don't rethrow here to allow UI to stay stable, but in prod we might want to
     } finally {
       setUploading(false);
     }
   };
 
-  // 2. Cartera Flow: Advance Request
-  const handleCarteraAdvance = (updated: CreditAnalysis) => {
-    // Preserve existing data (like commercialFiles and aiResult) while updating status and riskFiles
-    setAnalyses(prev => prev.map(a => a.id === updated.id ? { ...a, ...updated } : a));
-    setView('SUCCESS');
+  // 2. Cartera Flow: Advance Request -> Upload Risk Files to SAME Folder
+  const handleCarteraAdvance = async (updated: CreditAnalysis) => {
+    setUploading(true);
+    try {
+        console.log("Iniciando carga en Nube (Cartera)...");
+
+        // Prepare Risk Files
+        const filesToUpload = await Promise.all(
+            Object.entries(updated.riskFiles).map(async ([key, file]) => {
+              if (!file || !(file instanceof File)) return null;
+              return {
+                nombre: `RIESGO_${key}_${file.name}`,
+                mimeType: file.type,
+                fileContent: await fileToBase64(file)
+              };
+            })
+        );
+        const cleanFilesToUpload = filesToUpload.filter(f => f !== null);
+
+        // Construct Payload with existing Folder ID
+        const payload = {
+            targetFolderId: updated.driveFolderId, // CRITICAL: Send existing ID
+            datosCliente: {
+                id: updated.id,
+                clientName: updated.clientName, 
+                nit: updated.nit,
+                estado: 'PENDIENTE_DIRECTOR' // Status update for Sheet
+            },
+            archivos: cleanFilesToUpload
+        };
+
+        // Upload
+        await saveAnalysisToCloud(payload);
+
+        // Update Local State
+        setAnalyses(prev => prev.map(a => a.id === updated.id ? { ...a, ...updated, status: 'PENDIENTE_DIRECTOR' } : a));
+        setSelectedAnalysis(updated);
+        setView('SUCCESS');
+
+    } catch (error: any) {
+        alert("Error subiendo archivos de riesgo: " + error.message);
+    } finally {
+        setUploading(false);
+    }
   };
 
   // 3. Director Flow: Run AI Analysis
   const handleDirectorOpen = async (analysis: CreditAnalysis) => {
     // PERSISTENCE CHECK:
-    // If we already have the AI result (from Commercial flow or previous Director run), 
-    // DO NOT re-run the AI. Load the existing data directly from state/database.
     if (analysis.aiResult) {
        console.log("Cargando análisis existente de base de datos local...");
        
@@ -132,7 +176,6 @@ const App: React.FC = () => {
          flags: analysis.flags || analysis.aiResult.flags
        };
        
-       // Update state to reflect 'ANALIZADO' if it was pending
        if (analysis.status === 'PENDIENTE_DIRECTOR') {
           setAnalyses(prev => prev.map(a => a.id === analysis.id ? readyAnalysis : a));
        }
@@ -142,7 +185,7 @@ const App: React.FC = () => {
        return;
     }
 
-    // If NO result exists (e.g. legacy data or error), run AI on available files
+    // Run AI
     if (analysis.status === 'PENDIENTE_DIRECTOR' || analysis.status === 'ANALIZADO') {
       setLoadingAI(true);
       try {
@@ -248,7 +291,10 @@ const App: React.FC = () => {
                               <p className="font-bold text-slate-900">{a.clientName}</p>
                               <p className="text-xs text-slate-500">NIT: {a.nit}</p>
                            </div>
-                           <button className="px-4 py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold uppercase group-hover:bg-blue-600 group-hover:text-white transition-colors">Gestionar</button>
+                           <div className="flex items-center gap-2">
+                              {a.commercialFiles.rut ? <span className="w-2 h-2 bg-green-500 rounded-full"></span> : null}
+                              <button className="px-4 py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold uppercase group-hover:bg-blue-600 group-hover:text-white transition-colors">Gestionar</button>
+                           </div>
                         </div>
                      </div>
                    ))
@@ -288,9 +334,9 @@ const App: React.FC = () => {
         />
       )}
 
-      {view === 'SUCCESS' && (
+      {view === 'SUCCESS' && selectedAnalysis && (
         <SuccessView 
-           id={selectedAnalysis?.id || ''} 
+           id={selectedAnalysis.id} 
            onClose={() => setView('LIST')} 
         />
       )}

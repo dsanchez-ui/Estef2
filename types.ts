@@ -75,6 +75,9 @@ export interface CreditAnalysis {
   date: string;
   status: AnalysisStatus;
   
+  // Google Drive Integration
+  driveFolderId?: string; // Stores the ID of the folder created in Step 1
+
   // Commercial Data Bucket
   commercialFiles: {
     rut?: File | null;
