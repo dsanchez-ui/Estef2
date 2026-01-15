@@ -18,7 +18,8 @@ const CommercialDashboard: React.FC<CommercialDashboardProps> = ({ analyses, onN
     return {
       total: analyses.length,
       approved: analyses.filter(a => a.status === 'APROBADO').length,
-      pending: analyses.filter(a => a.status === 'PENDIENTE').length,
+      // Fix: 'PENDIENTE' is not a valid status. We check for all statuses that imply pending process.
+      pending: analyses.filter(a => a.status !== 'APROBADO' && a.status !== 'NEGADO').length,
       rejected: analyses.filter(a => a.status === 'NEGADO').length
     };
   }, [analyses]);
@@ -135,12 +136,20 @@ const CommercialDashboard: React.FC<CommercialDashboardProps> = ({ analyses, onN
 };
 
 const StatusBadge = ({ status }: { status: string }) => {
+  const pendingStyle = 'bg-blue-100 text-blue-700 border border-blue-200';
+  
   const styles: Record<string, string> = {
-    'PENDIENTE': 'bg-blue-100 text-blue-700 border border-blue-200',
+    'PENDIENTE_CARTERA': pendingStyle,
+    'PENDIENTE_DIRECTOR': pendingStyle,
+    'ANALIZADO': pendingStyle,
     'APROBADO': 'bg-green-100 text-green-700 border border-green-200',
     'NEGADO': 'bg-red-50 text-red-700 border border-red-100'
   };
-  return <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wide ${styles[status]}`}>{status}</span>;
+  
+  // Use status as key or fallback to pendingStyle
+  const style = styles[status] || pendingStyle;
+  
+  return <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wide ${style}`}>{status.replace('_', ' ')}</span>;
 };
 
 export default CommercialDashboard;

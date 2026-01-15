@@ -18,6 +18,26 @@ interface AnalysisDetailViewProps {
   onAction: (id: string, action: 'APROBADO' | 'NEGADO', manualCupo?: number, reason?: string) => void;
 }
 
+const LogoSVG = ({ className = "w-full h-full", color = "black" }: { className?: string, color?: string }) => (
+  <svg className={className} viewBox="0 0 200 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="30" cy="30" r="25" stroke={color} strokeWidth="4" fill="none"/>
+    <path 
+      d="M 42 20 L 27 20 Q 20 20 20 27 L 20 33 Q 20 40 27 40 L 42 40" 
+      stroke="#DA291C" 
+      strokeWidth="5" 
+      strokeLinecap="butt" 
+      fill="none"
+    />
+    <path 
+      d="M 27 30 L 38 30" 
+      stroke="#DA291C" 
+      strokeWidth="5" 
+      strokeLinecap="butt"
+    />
+    <text x="65" y="38" fill={color} fontFamily="Inter, sans-serif" fontWeight="900" fontSize="24" letterSpacing="0.1em">EQUITEL</text>
+  </svg>
+);
+
 const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userRole, onBack, onAction }) => {
   const [showReport, setShowReport] = useState(false);
   const [showWelcomeLetter, setShowWelcomeLetter] = useState(false);
@@ -30,7 +50,6 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
   const [emailTo, setEmailTo] = useState('');
   const [sendingEmail, setSendingEmail] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
-  const [rejectionReason, setRejectionReason] = useState(analysis.rejectionReason || '');
 
   useEffect(() => {
     if (userRole === UserRole.DIRECTOR && analysis.status === 'ANALIZADO') {
@@ -69,7 +88,7 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
     let body = "";
 
     if (analysis.status === 'APROBADO') {
-      subject = `Aprobación de Cupo Cummins de los Andes - ${analysis.clientName}`;
+      subject = `Aprobación de Cupo Grupo Equitel - ${analysis.clientName}`;
       body = generateWelcomeLetterHTML(analysis);
     } else {
       subject = `Respuesta Solicitud Crédito - ${analysis.clientName}`;
@@ -90,17 +109,20 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
     alert("Texto copiado al portapapeles");
   };
 
+  const handlePrint = () => {
+    window.print();
+  };
+
   return (
     <div className="space-y-8 max-w-7xl mx-auto pb-24 relative">
-      {/* Header Actions */}
       <div className="flex items-center justify-between no-print">
-        <button onClick={onBack} className="flex items-center gap-2 text-slate-500 font-bold hover:text-slate-900 transition-colors">
+        <button onClick={onBack} className="flex items-center gap-2 text-slate-500 font-bold hover:text-black transition-colors">
           <ArrowLeft size={20} /> Volver
         </button>
         
         {userRole === UserRole.DIRECTOR && (analysis.status === 'PENDIENTE_DIRECTOR' || analysis.status === 'ANALIZADO') && (
           <div className="flex gap-4">
-            <button onClick={handleReject} className="px-6 py-3 border-2 border-red-100 text-red-600 rounded-2xl font-black hover:bg-red-50 transition-colors uppercase text-xs tracking-widest">
+            <button onClick={handleReject} className="px-6 py-3 border-2 border-slate-200 text-slate-600 rounded-2xl font-black hover:bg-slate-50 transition-colors uppercase text-xs tracking-widest">
               Negar Solicitud
             </button>
             <button onClick={handleApprove} className="px-8 py-3 bg-equitel-red text-white rounded-2xl font-black shadow-xl hover:bg-red-700 transition-colors uppercase text-xs tracking-widest">
@@ -110,24 +132,19 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
         )}
       </div>
 
-      {/* Main Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        
-        {/* Left Column: Data & Analysis */}
         <div className="lg:col-span-8 space-y-8">
-          
-          {/* Header Card */}
-          <div className="bg-slate-900 rounded-[2.5rem] p-10 text-white relative overflow-hidden shadow-2xl">
-             <div className="absolute top-0 right-0 p-10 opacity-10">
-               <Activity size={120} />
+          <div className="bg-black rounded-[2.5rem] p-10 text-white relative overflow-hidden shadow-2xl">
+             <div className="absolute top-0 right-0 p-10 opacity-20">
+               <Activity size={120} className="text-equitel-red" />
              </div>
              <h2 className="text-3xl font-black uppercase mb-2 tracking-tight">{analysis.clientName}</h2>
-             <div className="flex flex-wrap gap-4 text-sm text-slate-400 font-medium">
-               <span className="bg-slate-800 px-3 py-1 rounded-lg">NIT: {analysis.nit}</span>
+             <div className="flex flex-wrap gap-4 text-sm text-slate-400 font-medium relative z-10">
+               <span className="bg-slate-900 border border-slate-800 px-3 py-1 rounded-lg">NIT: {analysis.nit}</span>
                <div className={`flex items-center gap-2 px-3 py-1 rounded-lg text-white font-black uppercase ${
-                 analysis.status === 'APROBADO' ? 'bg-green-500' :
-                 analysis.status === 'NEGADO' ? 'bg-red-500' : 
-                 analysis.riskLevel === 'BAJO' ? 'bg-green-500' : 'bg-yellow-500'
+                 analysis.status === 'APROBADO' ? 'bg-green-600' :
+                 analysis.status === 'NEGADO' ? 'bg-red-600' : 
+                 analysis.riskLevel === 'BAJO' ? 'bg-green-600' : 'bg-amber-500'
                }`}>
                  <ShieldAlert size={14} />
                  {(analysis.status === 'PENDIENTE_DIRECTOR' || analysis.status === 'PENDIENTE_CARTERA') ? `RIESGO ${analysis.riskLevel || '...'}` : analysis.status}
@@ -135,7 +152,7 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
              </div>
           </div>
 
-          {/* Conditional View based on Status */}
+          {/* VISIBLE TO ALL: APPROVED BLOCK */}
           {analysis.status === 'APROBADO' && (
             <div className="bg-green-50 rounded-[2.5rem] p-8 border border-green-100 animate-in fade-in">
               <div className="flex items-start gap-4">
@@ -147,7 +164,6 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                   <p className="text-green-800 mb-6">El cupo ha sido autorizado exitosamente. A continuación puede gestionar la formalización.</p>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* Welcome Letter Action */}
                     <div className="bg-white p-6 rounded-3xl shadow-sm border border-green-100">
                       <h4 className="font-bold text-slate-900 uppercase text-xs mb-4 flex items-center gap-2">
                         <FileText size={16} /> Carta de Bienvenida
@@ -155,14 +171,13 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                       <div className="flex gap-2">
                         <button 
                           onClick={() => setShowWelcomeLetter(true)}
-                          className="flex-1 py-3 bg-slate-900 text-white rounded-xl font-bold text-xs uppercase flex items-center justify-center gap-2 hover:bg-slate-800"
+                          className="flex-1 py-3 bg-black text-white rounded-xl font-bold text-xs uppercase flex items-center justify-center gap-2 hover:bg-slate-800"
                         >
                           <Printer size={16} /> Ver PDF
                         </button>
                       </div>
                     </div>
 
-                    {/* Email Action */}
                     <div className="bg-white p-6 rounded-3xl shadow-sm border border-green-100">
                       <h4 className="font-bold text-slate-900 uppercase text-xs mb-4 flex items-center gap-2">
                         <Mail size={16} /> Enviar Notificación
@@ -192,6 +207,7 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
             </div>
           )}
 
+          {/* VISIBLE TO ALL: DENIED BLOCK */}
           {analysis.status === 'NEGADO' && (
             <div className="bg-red-50 rounded-[2.5rem] p-8 border border-red-100 animate-in fade-in">
               <div className="flex items-start gap-4">
@@ -234,7 +250,7 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                           <button 
                             type="submit"
                             disabled={sendingEmail}
-                            className="px-6 py-2 bg-slate-900 text-white rounded-xl font-bold text-xs uppercase hover:bg-slate-800 disabled:opacity-50"
+                            className="px-6 py-2 bg-black text-white rounded-xl font-bold text-xs uppercase hover:bg-slate-800 disabled:opacity-50"
                           >
                             {emailSent ? 'Enviado' : 'Enviar'}
                           </button>
@@ -246,7 +262,6 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
             </div>
           )}
 
-          {/* Indicators Table (Detailed) */}
           {analysis.indicators && (
             <div className="bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-sm">
               <h3 className="flex items-center gap-3 text-lg font-black uppercase text-slate-900 mb-6">
@@ -257,7 +272,6 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
             </div>
           )}
 
-          {/* Cupo Calculation Breakdown - Hidden for Commercial unless Approved */}
           {userRole === UserRole.DIRECTOR && analysis.cupo && (
             <div className="bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-sm">
               <h3 className="flex items-center gap-3 text-lg font-black uppercase text-slate-900 mb-6">
@@ -268,7 +282,6 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
             </div>
           )}
 
-          {/* AI Guidance - Only Show if Pending/Analizado and Director */}
           {userRole === UserRole.DIRECTOR && (analysis.status === 'PENDIENTE_DIRECTOR' || analysis.status === 'ANALIZADO') && (
             <div className="bg-indigo-50 rounded-[2.5rem] p-8 border border-indigo-100">
               <div className="flex items-center gap-3 mb-4">
@@ -286,28 +299,25 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
           )}
         </div>
 
-        {/* Right Column: Actions & Summary */}
         <div className="lg:col-span-4 space-y-8">
-          
-          {/* Action Card */}
           <div className="bg-white rounded-[2.5rem] p-8 border-2 shadow-xl border-slate-100 sticky top-8">
             <h4 className="text-[10px] font-black uppercase tracking-widest mb-6 text-slate-400 border-b pb-2">Dictamen de Crédito</h4>
             
             <div className="space-y-6">
-              {/* Only Director sees Suggestions */}
               {userRole === UserRole.DIRECTOR && analysis.cupo && (
-                <div className="grid grid-cols-2 gap-2 mb-4">
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-                    <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Conservador</p>
-                    <p className="text-lg font-black text-slate-900">{formatCOP(analysis.cupo.cupoConservador || 0)}</p>
+                <div className="flex flex-col gap-4 mb-4">
+                  <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase mb-2">Conservador (50-40%)</p>
+                    <p className="text-2xl md:text-3xl font-black text-slate-900 truncate tracking-tight">{formatCOP(analysis.cupo.cupoConservador || 0)}</p>
                   </div>
-                  <div className="bg-red-50 p-3 rounded-xl border border-red-100">
-                    <p className="text-[9px] font-bold text-red-500 uppercase mb-1">Liberal</p>
-                    <p className="text-lg font-black text-red-900">{formatCOP(analysis.cupo.cupoLiberal || 0)}</p>
+                  <div className="bg-red-50 p-6 rounded-2xl border border-red-100">
+                    <p className="text-[10px] font-bold text-red-600 uppercase mb-2">Liberal (80-60%)</p>
+                    <p className="text-2xl md:text-3xl font-black text-red-600 truncate tracking-tight">{formatCOP(analysis.cupo.cupoLiberal || 0)}</p>
                   </div>
                 </div>
               )}
 
+              {/* VISIBLE TO ALL: STATUS & APPROVED CUPO */}
               {analysis.status === 'APROBADO' ? (
                  <div className="p-6 rounded-3xl border-2 border-green-500 bg-green-50">
                     <label className="text-[9px] font-black uppercase mb-2 block text-green-700 tracking-widest">Cupo Otorgado</label>
@@ -361,7 +371,7 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
             </div>
 
             {userRole === UserRole.DIRECTOR && (
-              <button onClick={() => setShowReport(true)} className="w-full mt-8 py-4 bg-slate-900 text-white rounded-xl font-bold flex items-center justify-center gap-3 hover:bg-slate-800 transition-all text-xs uppercase tracking-widest">
+              <button onClick={() => setShowReport(true)} className="w-full mt-8 py-4 bg-black text-white rounded-xl font-bold flex items-center justify-center gap-3 hover:bg-slate-800 transition-all text-xs uppercase tracking-widest shadow-lg">
                  <Printer size={16} /> Imprimir Informe Interno
               </button>
             )}
@@ -369,7 +379,6 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
         </div>
       </div>
 
-      {/* Confirmation Modal for High Risk */}
       {showRiskConfirm && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
           <div className="max-w-md w-full bg-white rounded-[2.5rem] p-10 text-center shadow-2xl animate-in zoom-in duration-300">
@@ -391,27 +400,25 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
         </div>
       )}
 
-      {/* PDF Viewers (Internal Report or Welcome Letter) */}
       {(showReport || showWelcomeLetter) && (
         <div id="printable-report-container" className="fixed inset-0 bg-white z-[200] overflow-y-auto">
-          {/* Correction: Use items-start to ensure it starts at top, remove vertical centering */}
-          <div className="min-h-screen bg-slate-100 flex justify-center items-start pt-8 pb-8 no-print">
+          <div className="min-h-screen bg-slate-100 flex flex-col items-center pt-8 pb-8 no-print">
              <div className="fixed top-4 right-4 flex gap-2 z-50">
-               <button onClick={() => window.print()} className="bg-slate-900 text-white px-6 py-3 rounded-full font-bold shadow-lg hover:bg-slate-800 flex items-center gap-2">
+               <button onClick={handlePrint} className="bg-black text-white px-6 py-3 rounded-full font-bold shadow-lg hover:bg-slate-800 flex items-center gap-2">
                  <Printer size={18} /> Imprimir / Guardar PDF
                </button>
                <button onClick={() => { setShowReport(false); setShowWelcomeLetter(false); }} className="bg-white text-slate-900 px-6 py-3 rounded-full font-bold shadow-lg hover:bg-slate-50">
                  Cerrar
                </button>
              </div>
-          </div>
-          
-          <div className="bg-white max-w-[21cm] mx-auto min-h-[29.7cm] p-[1.5cm] shadow-2xl relative print-paper mt-8 no-print-margin">
-             {showWelcomeLetter ? (
-               <div dangerouslySetInnerHTML={{ __html: generateWelcomeLetterHTML(analysis) }} />
-             ) : (
-               <InternalReport analysis={analysis} manualCupo={manualCupo} />
-             )}
+
+             <div className="bg-white max-w-[21cm] w-full min-h-[29.7cm] p-[1.5cm] shadow-2xl relative print-paper">
+                {showWelcomeLetter ? (
+                  <div dangerouslySetInnerHTML={{ __html: generateWelcomeLetterHTML(analysis) }} />
+                ) : (
+                  <InternalReport analysis={analysis} manualCupo={manualCupo} />
+                )}
+             </div>
           </div>
         </div>
       )}
@@ -419,12 +426,13 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
   );
 };
 
-// Extracted Internal Report Component to separate logic
 const InternalReport = ({ analysis, manualCupo }: { analysis: CreditAnalysis, manualCupo: number }) => (
   <>
     <div className="flex justify-between items-start border-b-4 border-equitel-red pb-6 mb-8">
       <div className="flex items-center gap-4">
-        <div className="bg-equitel-red text-white w-16 h-16 flex items-center justify-center font-black text-4xl rounded-lg print-force-bg-gray print-force-text-dark">E</div>
+        <div className="w-48 h-20 relative">
+             <LogoSVG color="black" />
+        </div>
         <div>
           <h1 className="text-2xl font-black uppercase text-slate-900 leading-none">Informe de Crédito</h1>
           <p className="text-xs font-bold text-slate-500 uppercase mt-1">Organización Equitel S.A.</p>
@@ -497,7 +505,7 @@ const InternalReport = ({ analysis, manualCupo }: { analysis: CreditAnalysis, ma
               <p className="text-xs font-bold uppercase text-slate-500 mt-1">{numberToLetters(manualCupo)}</p>
             </div>
             <div className="text-right">
-              <div className="w-64 border-b border-slate-900 mb-2"></div>
+              <div className="w-64 border-b border-black mb-2"></div>
               <p className="text-xs font-black uppercase text-slate-900">John Deyver Campos Moya</p>
               <p className="text-[10px] font-bold text-slate-400 uppercase">Director Nacional de Cartera</p>
             </div>
@@ -604,7 +612,7 @@ const CupoCalculationBreakdown = ({ cupo }: { cupo: any }) => {
           </div>
         ))}
       </div>
-      <div className="mt-4 p-4 bg-slate-900 text-white rounded-xl flex justify-between items-center shadow-lg">
+      <div className="mt-4 p-4 bg-black text-white rounded-xl flex justify-between items-center shadow-lg">
         <span className="font-bold uppercase text-xs tracking-widest">Resultado Promedio (6 Indicadores)</span>
         <span className="text-2xl font-black text-equitel-red">{formatCOP(cupo.resultadoPromedio)}</span>
       </div>

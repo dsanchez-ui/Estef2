@@ -64,12 +64,12 @@ const CarteraTaskView: React.FC<CarteraTaskViewProps> = ({ analysis, onAdvance, 
         </div>
 
         {/* Right: Risk Uploads (Action Required) */}
-        <div className="bg-blue-50 p-6 rounded-3xl border border-blue-100 relative overflow-hidden">
-           <div className="absolute top-0 right-0 p-6 opacity-5">
+        <div className="bg-black p-8 rounded-3xl border border-slate-800 relative overflow-hidden text-white">
+           <div className="absolute top-0 right-0 p-6 opacity-20 text-equitel-red">
              <Upload size={100} />
            </div>
-           <h3 className="font-bold text-blue-900 text-sm mb-2 uppercase">Acción Requerida</h3>
-           <p className="text-xs text-blue-700 mb-6">Cargar reportes de centrales de riesgo para completar el expediente.</p>
+           <h3 className="font-bold text-white text-sm mb-2 uppercase">Acción Requerida</h3>
+           <p className="text-xs text-slate-400 mb-6">Cargar reportes de centrales de riesgo para completar el expediente.</p>
            
            <div className="space-y-4">
              <RiskFileDrop 
@@ -87,7 +87,7 @@ const CarteraTaskView: React.FC<CarteraTaskViewProps> = ({ analysis, onAdvance, 
            <button 
              onClick={handleSubmit}
              disabled={!canAdvance || loading}
-             className="w-full mt-8 py-4 bg-blue-600 text-white rounded-xl font-black uppercase text-xs tracking-widest hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg shadow-blue-200"
+             className="w-full mt-8 py-4 bg-equitel-red text-white rounded-xl font-black uppercase text-xs tracking-widest hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg shadow-red-900/50"
            >
              {loading ? <Loader2 className="animate-spin" /> : <Send size={16} />}
              {loading ? "Procesando..." : "Avanzar a Director"}
@@ -98,23 +98,35 @@ const CarteraTaskView: React.FC<CarteraTaskViewProps> = ({ analysis, onAdvance, 
   );
 };
 
+// IMPROVED RiskFileDrop: Label as container
 const RiskFileDrop = ({ label, file, onSelect }: any) => (
-  <div className={`relative border-2 border-dashed rounded-xl p-4 transition-all text-center group cursor-pointer ${file ? 'border-green-400 bg-green-50/50' : 'border-blue-200 bg-white hover:border-blue-400'}`}>
-     <input type="file" className="hidden" id={label} accept=".pdf" onChange={e => e.target.files && onSelect(e.target.files[0])} />
-     <label htmlFor={label} className="cursor-pointer w-full block">
-       {file ? (
-         <div className="flex items-center justify-center gap-2 text-green-700">
-           <CheckCircle size={16} />
-           <span className="text-xs font-bold truncate max-w-[150px]">{file.name}</span>
-         </div>
-       ) : (
-         <div className="flex items-center justify-center gap-2 text-blue-400">
-           <Upload size={16} />
-           <span className="text-xs font-bold uppercase">{label}</span>
-         </div>
-       )}
-     </label>
-  </div>
+  <label 
+    htmlFor={label}
+    className={`
+      relative border-2 border-dashed rounded-xl p-4 transition-all text-center group cursor-pointer block
+      ${file ? 'border-green-400 bg-green-900/20' : 'border-slate-700 bg-slate-900 hover:border-equitel-red'}
+    `}
+  >
+     <input 
+       type="file" 
+       className="hidden" 
+       id={label} 
+       accept=".pdf" 
+       onChange={e => e.target.files && onSelect(e.target.files[0])} 
+     />
+     
+     {file ? (
+       <div className="flex items-center justify-center gap-2 text-green-400">
+         <CheckCircle size={16} />
+         <span className="text-xs font-bold truncate max-w-[150px]">{file.name}</span>
+       </div>
+     ) : (
+       <div className="flex items-center justify-center gap-2 text-slate-400 group-hover:text-white">
+         <Upload size={16} />
+         <span className="text-xs font-bold uppercase">{label}</span>
+       </div>
+     )}
+  </label>
 );
 
 export default CarteraTaskView;

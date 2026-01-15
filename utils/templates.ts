@@ -15,11 +15,11 @@ export const generateWelcomeLetterHTML = (analysis: CreditAnalysis) => {
       <strong>${analysis.clientName}</strong><br>
       Departamento de Compras</p>
       
-      <p><strong>Asunto: ¡Bienvenidos a Cummins de los Andes! Confirmación de Cupo de Crédito.</strong></p>
+      <p><strong>Asunto: ¡Bienvenidos a Grupo Equitel! Confirmación de Cupo de Crédito.</strong></p>
       
       <p>Estimados señores:</p>
       
-      <p>Para <strong>Cummins de los Andes S.A.</strong> (una compañía de la Organización Equitel) es un verdadero gusto darles la bienvenida. Nos entusiasma ratificar nuestras condiciones comerciales y contar con aliados como ustedes, con quienes esperamos construir una relación sólida enfocada en el crecimiento mutuo, el desarrollo y la productividad.</p>
+      <p>Para <strong>Grupo Equitel</strong> es un verdadero gusto darles la bienvenida. Nos entusiasma ratificar nuestras condiciones comerciales y contar con aliados como ustedes, con quienes esperamos construir una relación sólida enfocada en el crecimiento mutuo, el desarrollo y la productividad.</p>
       
       <p>Queremos ser el respaldo que su operación necesita. Por ello, ponemos a su disposición toda nuestra asesoría técnica y el portafolio de nuestra división <strong>POTENCIA</strong>.</p>
       

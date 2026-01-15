@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Estefanía 2.0 - Análisis de Crédito</title>
+    <title>Estefanía 2.0 - Análisis de Crédito Equitel</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
     <style>
@@ -12,66 +12,62 @@
             font-family: 'Inter', sans-serif;
             background-color: #f8fafc;
         }
-        /* Cummins/Equitel Colors */
+        /* Equitel Corporate Colors */
         .bg-equitel-red { background-color: #DA291C; }
         .text-equitel-red { color: #DA291C; }
         .border-equitel-red { border-color: #DA291C; }
+        .bg-equitel-dark { background-color: #000000; } /* Pure Black per brand */
 
         @media print {
             @page {
-                margin: 0;
+                margin: 0; /* Critical: Removes browser default header/footer margins */
                 size: auto;
             }
-            body {
-                visibility: hidden;
-                background-color: white;
-                margin: 0;
-                padding: 0;
+            html, body {
+                height: 100%;
+                margin: 0 !important;
+                padding: 0 !important;
+                background-color: white !important;
+                overflow: visible !important;
             }
-            /* Ocultar elementos específicos que no se deben imprimir */
-            .no-print {
+            /* Hide UI elements */
+            .no-print, nav, aside, header, button {
                 display: none !important;
             }
-            /* Configuración del contenedor del reporte */
+            
+            /* Report Container Configuration */
             #printable-report-container {
-                visibility: visible !important;
-                position: absolute !important;
-                left: 0 !important;
-                top: 0 !important;
+                display: block !important;
+                position: relative !important;
                 width: 100% !important;
-                height: 100% !important;
+                height: auto !important;
+                top: 0 !important;
+                left: 0 !important;
                 margin: 0 !important;
                 padding: 0 !important;
                 background-color: white !important;
                 z-index: 9999 !important;
-                overflow: visible !important;
             }
-            /* Asegurar que todos los hijos del reporte sean visibles */
-            #printable-report-container * {
-                visibility: visible !important;
-            }
-            /* Ajustes para la hoja de papel en modo impresión */
+            
+            /* Paper simulation reset for print */
             .print-paper {
-                margin: 0 !important;
-                padding: 1.5cm !important; /* Margen estándar para documentos */
                 box-shadow: none !important;
-                max-width: 100% !important;
-                min-height: auto !important;
+                margin: 0 !important;
                 width: 100% !important;
-                margin-top: 0 !important; /* Force no top margin */
+                max-width: 100% !important;
+                padding: 1.5cm !important; /* Internal document margin */
             }
-            .no-print-margin {
-                margin-top: 0 !important;
-            }
-            /* Ajustes de color para impresión */
+
+            /* Ensure text contrast in print */
             .print-force-text-dark {
-                color: #1a202c !important; /* Force dark slate/black */
+                color: #000000 !important;
             }
             .print-force-bg-gray {
-                background-color: #f1f5f9 !important; /* Force light gray bg */
+                background-color: #f3f4f6 !important; /* light gray for print contrast */
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
             }
+
             .page-break {
                 page-break-before: always;
             }

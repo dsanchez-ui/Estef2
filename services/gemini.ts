@@ -73,7 +73,6 @@ export const extractIdentityFromRUT = async (rutFile: File) => {
 
 /**
  * Validates commercial documents using strict OCR and rule checking.
- * Restored from "analyzeDocumentsWithGemini" logic.
  */
 export const validateCommercialDocuments = async (files: File[], clientName: string, nit: string): Promise<ValidationResult> => {
   const apiKey = process.env.API_KEY;
@@ -264,7 +263,7 @@ export const validateCommercialDocuments = async (files: File[], clientName: str
 
     // 1. Cámara de Comercio
     const camaraDate = rawData.validacionDocumental.fechasVigencia.camara;
-    const isCamaraValid = isDateValid(camaraDate, 60); // 60 days strict
+    const isCamaraValid = isDateValid(camaraDate, 60); 
     results.push({
         fileName: "Cámara de Comercio",
         isValid: isCamaraValid,
@@ -284,7 +283,6 @@ export const validateCommercialDocuments = async (files: File[], clientName: str
 
     // 3. Referencia Comercial
     const refDate = rawData.validacionDocumental.fechasVigencia.referencia;
-    // Commercial refs are often older, maybe allow 90? Sticking to strict for now.
     const isRefValid = isDateValid(refDate, 90); 
     results.push({
         fileName: "Referencia Comercial",
@@ -338,7 +336,7 @@ export const validateCommercialDocuments = async (files: File[], clientName: str
         overallValid,
         results,
         summary,
-        rawData // Returning full AI extraction for persistence
+        rawData 
     };
 
   } catch (e) {
@@ -359,34 +357,37 @@ export const runFullCreditAnalysis = async (allFiles: File[], clientName: string
   const parts: any[] = partsResults.filter(p => p !== null);
 
   const prompt = `
-  Actúa como Estefanía 2.0, Auditor Senior de Riesgo. Analiza los documentos para el cliente ${clientName} (NIT: ${nit}).
+Actúa como Estefanía 2.0, el sistema experto de riesgo de Equitel. Analiza los documentos financieros y legales adjuntos (PDF/Excel) para el cliente "${clientName}" (NIT: ${nit}).
   
-  EJECUCIÓN DE MODELO PREDICTIVO Y CÁLCULO FINANCIERO:
+  TU MISIÓN: Ejecutar una simulación de modelo predictivo y calcular el cupo de crédito exacto siguiendo estrictamente las reglas de negocio descritas abajo.
+
+  ### 1. MODELO PREDICTIVO DE MORA (Simulación XGBoost)
+  Extrae las variables de entrada y estima la probabilidad de incumplimiento (0 a 1) basada en el perfil financiero:
+  - **Inputs a evaluar:** Ingresos anuales, Activos Totales, Pasivos Totales, Sector Económico (inferido), Mora Histórica (buscar en reportes), Antigüedad, Score Centrales de Riesgo y Volumen de Operaciones.
+  - **Salida:** 'scoreProbability' (number 0-1).
+
+  ### 2. CÁLCULO DE RATIOS FINANCIEROS (Completo)
+  Extrae datos de los Estados Financieros (Año más reciente) y calcula:
+  - **Liquidez:** Razón Corriente, Prueba Ácida, Capital de Trabajo Neto (KNT).
+  - **Endeudamiento:** Global, Corto Plazo (CP), Largo Plazo (LP).
+  - **Rentabilidad:** Margen Bruto, Operacional, Neto, ROA, ROE.
+  - **Operación:** Días Cartera, Días Inventario, Ciclo Operacional, Rotación de Activos.
+  - **Otros:** Solvencia (Pasivo/Patrimonio), EBITDA, Z-Altman Score (Colombia Mfg/Service).
+
+  ### 3. CÁLCULO DE CUPO SUGERIDO (REGLA DE LOS 6 INDICADORES)
+  Calcula el cupo final como el PROMEDIO de las siguientes 6 variables. Si un dato no existe, asume 0 para ese componente.
   
-  1. **Modelo Predictivo de Mora (XGBoost Metaphor)**:
-     Evalúa las siguientes entradas extraídas de los documentos:
-     - Ingresos, Activos, Pasivos.
-     - Sector económico (inferido).
-     - Mora histórica (Datacrédito).
-     - Score centrales de riesgo.
-     - Antigüedad.
-     -> Salida: Probabilidad de mora (0 a 1).
+  1. **Datacrédito (Ponderado):** (Promedio de cupos últimos 3 periodos en reporte) * 10%.
+  2. **OtorgA (Plataforma):** Valor directo "Cupo" u "OtorgA" que aparece al final del informe Datacrédito (en miles, conviértelo a pesos completos).
+  3. **Opinión Informa (Ponderado):** (Opinión de Crédito / Cupo Máximo Recomendado del informe Informa) * 10%.
+     *NOTA: ¡No alucines! Usa estrictamente el 10% de la opinión, no uses la fórmula antigua de patrimonio.*
+  4. **Utilidad Neta Mensual:** (Utilidad Neta del último año) / 12.
+  5. **Referencias Comerciales:** Promedio de los valores reportados en las referencias adjuntas.
+  6. **Cupo Mensual Operativo:** ((EBITDA - Impuestos - GastosFinancieros + Efectivo) / 2) / 12.
+     *(Nota: Si impuestos no es explícito, usa 35% de Utilidad Ante Impuestos).*
 
-  2. **Cálculo de Ratios Financieros (Estricto)**:
-     Extrae y calcula: Liquidez, Prueba Ácida, KNT, Endeudamiento Global, LP, CP, Margen Neto/Operacional/Bruto, ROA, ROE, EBIT, EBITDA, Z-Altman Score, Solvencia, Ciclo Operacional.
-
-  3. **Cálculo de Cupo Sugerido (Regla de los 6 Indicadores)**:
-     Calcula el promedio de:
-     a. Datacrédito (Promedio 3 periodos) * 10%
-     b. OtorgA (Valor directo en miles)
-     c. Opinión de crédito Informa * 10%
-     d. Utilidad neta anual último año / 12
-     e. Referencias comerciales (promedio)
-     f. Cupo Mensual Operativo: ((EBITDA - Impuestos - GastosFin + Efectivo) / 2) / 12
-
-     *Nota: No alucines con la Opinión de Crédito antigua. Usa estrictamente la ponderación del 10%.*
-
-  RETORNA UN ÚNICO JSON CON LA SIGUIENTE ESTRUCTURA:
+  ### SALIDA JSON REQUERIDA
+  Retorna UNICAMENTE un objeto JSON con esta estructura exacta. Asegúrate de incluir flags rojas y verdes.
   `;
 
   const response = await ai.models.generateContent({
@@ -429,9 +430,10 @@ export const runFullCreditAnalysis = async (allFiles: File[], clientName: string
           flags: {
             type: Type.OBJECT,
             properties: {
-              green: { type: Type.ARRAY, items: { type: Type.STRING } },
-              red: { type: Type.ARRAY, items: { type: Type.STRING } }
-            }
+              green: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Banderas Verdes (Obligatorio)" },
+              red: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Banderas Rojas (Obligatorio)" }
+            },
+            required: ["green", "red"]
           }
         }
       }

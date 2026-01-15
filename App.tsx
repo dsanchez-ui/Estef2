@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { UserRole, CreditAnalysis } from './types';
 import RoleSelector from './components/RoleSelector';
@@ -12,8 +11,9 @@ import SuccessView from './components/SuccessView';
 import { runFullCreditAnalysis } from './services/gemini';
 import { sendEmail } from './services/email';
 import { saveAnalysisToCloud } from './services/server';
-import { fileToBase64 } from './utils/calculations';
+import { fileToBase64, redondearComercial, formatCOP } from './utils/calculations';
 import CommercialDashboard from './components/CommercialDashboard';
+import { FileText, CheckCircle2, XCircle, Clock, AlertCircle } from 'lucide-react';
 
 // Mock Data for Demo
 const MOCK_DB: CreditAnalysis[] = [];
@@ -28,7 +28,6 @@ const App: React.FC = () => {
   const [uploading, setUploading] = useState(false);
 
   // Global Configuration State
-  // Default set to requested email
   const [notificationEmails, setNotificationEmails] = useState("dsanchez@equitel.com.co");
 
   // Role Selection Logic
@@ -59,9 +58,10 @@ const App: React.FC = () => {
 
       // D. Construct Payload for GAS
       const payload = {
+        notificationType: 'COMERCIAL_UPLOAD', // Flag for First Email
         datosCliente: {
           id: newAnalysis.id,
-          clientName: newAnalysis.clientName, // Ensure clientName matches GAS expectations
+          clientName: newAnalysis.clientName,
           nit: newAnalysis.nit,
           comercialNombre: newAnalysis.comercial.name,
           comercialEmail: newAnalysis.comercial.email,
@@ -75,8 +75,6 @@ const App: React.FC = () => {
       // E. Send to Cloud & Get Folder ID
       const response = await saveAnalysisToCloud(payload);
       
-      // Update analysis with the returned folder ID so Cartera can use it later
-      // The GAS script must return { success: true, folderId: "...", urlCarpeta: "..." }
       const analysisWithFolder = {
         ...newAnalysis,
         driveFolderId: response.folderId || undefined 
@@ -85,32 +83,21 @@ const App: React.FC = () => {
       // F. Update Local State 
       setAnalyses(prev => [analysisWithFolder, ...prev]);
 
-      // G. Trigger Notification (Frontend Simulation)
-      const subject = `Nueva Solicitud de Crédito: ${newAnalysis.clientName}`;
-      const body = `
-        <h3>Nueva Solicitud Creada</h3>
-        <p>El asesor comercial <strong>${newAnalysis.comercial.name}</strong> ha cargado una nueva solicitud y se ha guardado en Drive.</p>
-        <ul>
-          <li><strong>Cliente:</strong> ${newAnalysis.clientName}</li>
-          <li><strong>NIT:</strong> ${newAnalysis.nit}</li>
-        </ul>
-      `;
-      sendEmail(notificationEmails, subject, body).catch(console.error);
+      // Note: Email sending logic has been moved mostly to Backend, but we keep this for redundancy if needed.
+      // Currently, the App Script handles the detailed email with checklist.
 
-      // Store ID in selectedAnalysis so SuccessView can show it
       setSelectedAnalysis(analysisWithFolder);
       setView('SUCCESS');
 
     } catch (error: any) {
       alert("Error crítico al subir: " + error.message);
       console.error(error);
-      // We don't rethrow here to allow UI to stay stable, but in prod we might want to
     } finally {
       setUploading(false);
     }
   };
 
-  // 2. Cartera Flow: Advance Request -> Upload Risk Files to SAME Folder
+  // 2. Cartera Flow: Advance Request -> Upload Risk Files to SAME Folder -> Trigger Second Email
   const handleCarteraAdvance = async (updated: CreditAnalysis) => {
     setUploading(true);
     try {
@@ -129,14 +116,15 @@ const App: React.FC = () => {
         );
         const cleanFilesToUpload = filesToUpload.filter(f => f !== null);
 
-        // Construct Payload with existing Folder ID
+        // Construct Payload with existing Folder ID AND Notification Trigger
         const payload = {
-            targetFolderId: updated.driveFolderId, // CRITICAL: Send existing ID
+            targetFolderId: updated.driveFolderId,
+            notificationType: 'RIESGO_UPLOAD', // TRIGGER FOR SECOND EMAIL
             datosCliente: {
                 id: updated.id,
                 clientName: updated.clientName, 
                 nit: updated.nit,
-                estado: 'PENDIENTE_DIRECTOR' // Status update for Sheet
+                estado: 'PENDIENTE_DIRECTOR'
             },
             archivos: cleanFilesToUpload
         };
@@ -162,13 +150,14 @@ const App: React.FC = () => {
     if (analysis.aiResult) {
        console.log("Cargando análisis existente de base de datos local...");
        
-       // Ensure the analysis object is fully populated for the view
        const readyAnalysis: CreditAnalysis = {
          ...analysis,
          status: analysis.status === 'PENDIENTE_DIRECTOR' ? 'ANALIZADO' : analysis.status,
          indicators: analysis.indicators || analysis.aiResult.financialIndicators,
          cupo: analysis.cupo || { 
             resultadoPromedio: analysis.aiResult.suggestedCupo, 
+            cupoConservador: redondearComercial(analysis.aiResult.suggestedCupo * (analysis.aiResult.scoreProbability > 0.5 ? 0.5 : 0.8)),
+            cupoLiberal: redondearComercial(analysis.aiResult.suggestedCupo * (analysis.aiResult.scoreProbability > 0.5 ? 0.8 : 1.0)),
             plazoRecomendado: analysis.aiResult.financialIndicators.cicloOperacional > 60 ? 45 : 30 
          },
          riskLevel: analysis.riskLevel || (analysis.aiResult.scoreProbability > 0.5 ? 'ALTO' : 'BAJO'),
@@ -200,12 +189,18 @@ const App: React.FC = () => {
 
         const aiResult = await runFullCreditAnalysis(allFiles, analysis.clientName, analysis.nit);
         
+        // Calculate ranges based on the average if AI doesn't give them explicit
+        const riskFactor = aiResult.scoreProbability > 0.5 ? 0.5 : 0.8; // High Risk = 50% of avg, Low Risk = 80%
+        const liberalFactor = aiResult.scoreProbability > 0.5 ? 0.8 : 1.0; 
+
         const analyzedAnalysis: CreditAnalysis = {
           ...analysis,
           status: 'ANALIZADO',
           indicators: aiResult.financialIndicators,
           cupo: { 
              resultadoPromedio: aiResult.suggestedCupo, 
+             cupoConservador: redondearComercial(aiResult.suggestedCupo * riskFactor), // Fix Zero Value
+             cupoLiberal: redondearComercial(aiResult.suggestedCupo * liberalFactor),  // Fix Zero Value
              plazoRecomendado: aiResult.financialIndicators.cicloOperacional > 60 ? 45 : 30 
           },
           riskLevel: aiResult.scoreProbability > 0.5 ? 'ALTO' : 'BAJO',
@@ -244,11 +239,11 @@ const App: React.FC = () => {
     );
   }
 
-  const visibleAnalyses = role === UserRole.COMERCIAL 
-    ? analyses 
-    : role === UserRole.CARTERA 
-    ? analyses.filter(a => a.status === 'PENDIENTE_CARTERA') 
-    : analyses;
+  // Filter Logic:
+  // Comercial: Sees all.
+  // Director: Sees all.
+  // Cartera: Now sees ALL too, but UI splits them into "Tasks" vs "History".
+  const visibleAnalyses = analyses;
 
   return (
     <Layout role={role} onReset={() => { setRole(null); setView('LIST'); }}>
@@ -281,24 +276,93 @@ const App: React.FC = () => {
            )}
 
            {role === UserRole.CARTERA && (
-             <div className="space-y-6">
-                <h2 className="text-2xl font-black text-slate-900">Bandeja de Entrada Cartera</h2>
-                {visibleAnalyses.length === 0 ? <p className="text-slate-400 italic">No hay tareas pendientes.</p> : (
-                   visibleAnalyses.map(a => (
-                     <div key={a.id} onClick={() => { setSelectedAnalysis(a); setView('TASK'); }} className="bg-white p-6 rounded-2xl border border-slate-200 hover:border-blue-400 cursor-pointer shadow-sm group">
-                        <div className="flex justify-between items-center">
-                           <div>
-                              <p className="font-bold text-slate-900">{a.clientName}</p>
-                              <p className="text-xs text-slate-500">NIT: {a.nit}</p>
-                           </div>
-                           <div className="flex items-center gap-2">
-                              {a.commercialFiles.rut ? <span className="w-2 h-2 bg-green-500 rounded-full"></span> : null}
-                              <button className="px-4 py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold uppercase group-hover:bg-blue-600 group-hover:text-white transition-colors">Gestionar</button>
-                           </div>
-                        </div>
+             <div className="space-y-8 animate-in fade-in">
+                <div className="flex items-end justify-between">
+                  <div>
+                    <h2 className="text-3xl font-black text-slate-900 tracking-tight">Gestión Cartera</h2>
+                    <p className="text-slate-500">Administración de expedientes y análisis de riesgo</p>
+                  </div>
+                </div>
+
+                {/* 1. TAREAS PENDIENTES (Solo Pendiente Cartera) */}
+                <div className="space-y-4">
+                  <h3 className="font-bold text-slate-400 uppercase text-xs tracking-widest flex items-center gap-2">
+                     <AlertCircle size={16} className="text-amber-500" />
+                     Pendientes de Carga (Riesgo)
+                  </h3>
+                  
+                  {visibleAnalyses.filter(a => a.status === 'PENDIENTE_CARTERA').length === 0 ? (
+                     <div className="p-6 rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-center text-slate-400 text-sm">
+                       No hay tareas pendientes en este momento.
                      </div>
-                   ))
-                )}
+                  ) : (
+                    visibleAnalyses.filter(a => a.status === 'PENDIENTE_CARTERA').map(a => (
+                       <div key={a.id} onClick={() => { setSelectedAnalysis(a); setView('TASK'); }} className="bg-white p-6 rounded-2xl border border-slate-200 hover:border-blue-400 cursor-pointer shadow-sm group transition-all hover:shadow-md">
+                          <div className="flex justify-between items-center">
+                             <div className="flex items-center gap-4">
+                                <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+                                  {a.clientName.charAt(0)}
+                                </div>
+                                <div>
+                                    <p className="font-bold text-slate-900">{a.clientName}</p>
+                                    <p className="text-xs text-slate-500">NIT: {a.nit} • Solicitado: {a.date}</p>
+                                </div>
+                             </div>
+                             <div className="flex items-center gap-4">
+                                <span className="text-[10px] font-bold uppercase bg-amber-100 text-amber-700 px-3 py-1 rounded-full">Requiere Acción</span>
+                                <button className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold uppercase group-hover:bg-equitel-red transition-colors">Gestionar</button>
+                             </div>
+                          </div>
+                       </div>
+                    ))
+                  )}
+                </div>
+
+                {/* 2. HISTORIAL COMPLETO (Para ver resultados, cartas, etc) */}
+                <div className="space-y-4 pt-4 border-t border-slate-200">
+                  <h3 className="font-bold text-slate-400 uppercase text-xs tracking-widest flex items-center gap-2">
+                     <Clock size={16} />
+                     Historial y Consultas
+                  </h3>
+                  <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden">
+                     <table className="w-full text-left">
+                        <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                          <tr>
+                            <th className="px-6 py-4">Cliente</th>
+                            <th className="px-6 py-4">Estado</th>
+                            <th className="px-6 py-4">Resultado</th>
+                            <th className="px-6 py-4 text-center">Detalle</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                           {visibleAnalyses.filter(a => a.status !== 'PENDIENTE_CARTERA').map(a => (
+                             <tr key={a.id} className="hover:bg-slate-50 cursor-pointer" onClick={() => { setSelectedAnalysis(a); setView('DETAIL'); }}>
+                                <td className="px-6 py-4 text-sm font-bold text-slate-700">{a.clientName}</td>
+                                <td className="px-6 py-4">
+                                   <span className={`px-2 py-1 rounded-full text-[9px] font-black uppercase ${
+                                      a.status === 'APROBADO' ? 'bg-green-100 text-green-700' :
+                                      a.status === 'NEGADO' ? 'bg-red-100 text-red-700' :
+                                      'bg-blue-100 text-blue-700'
+                                   }`}>
+                                      {a.status.replace('_', ' ')}
+                                   </span>
+                                </td>
+                                <td className="px-6 py-4 text-xs font-bold text-slate-500">
+                                   {a.status === 'APROBADO' ? `Cupo: ${formatCOP(a.assignedCupo || 0)}` : 
+                                    a.status === 'NEGADO' ? 'Rechazado' : 'En Proceso'}
+                                </td>
+                                <td className="px-6 py-4 text-center">
+                                   <FileText size={16} className="text-slate-400 mx-auto" />
+                                </td>
+                             </tr>
+                           ))}
+                           {visibleAnalyses.filter(a => a.status !== 'PENDIENTE_CARTERA').length === 0 && (
+                             <tr><td colSpan={4} className="py-8 text-center text-xs text-slate-400">No hay historial disponible.</td></tr>
+                           )}
+                        </tbody>
+                     </table>
+                  </div>
+                </div>
              </div>
            )}
 

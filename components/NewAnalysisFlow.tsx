@@ -118,12 +118,14 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
 
   return (
     <div className="max-w-4xl mx-auto bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-      <div className="bg-slate-900 p-8 text-white flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-black uppercase">Nueva Solicitud</h2>
-          <p className="text-slate-400 text-xs">Paso 1: Validación y Carga Comercial</p>
+      {/* Header with Equitel Black/Red Theme */}
+      <div className="bg-black p-8 text-white flex justify-between items-center relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-32 h-32 bg-equitel-red opacity-20 rounded-full blur-3xl -mr-10 -mt-10"></div>
+        <div className="relative z-10">
+          <h2 className="text-2xl font-black uppercase tracking-tight">Nueva Solicitud</h2>
+          <p className="text-slate-400 text-xs mt-1">Paso 1: Validación y Carga Comercial</p>
         </div>
-        <div className="bg-equitel-red text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase">
+        <div className="bg-equitel-red text-white text-[10px] font-bold px-4 py-1.5 rounded-full uppercase tracking-widest shadow-lg relative z-10">
           Rol Comercial
         </div>
       </div>
@@ -136,44 +138,47 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
         )}
 
         {/* Identity Section */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-6">
             <div className="col-span-2">
-              <p className="text-xs font-bold text-slate-400 uppercase mb-2">1. Identificación Automática</p>
+              <p className="text-xs font-bold text-slate-400 uppercase mb-3">1. Identificación Automática</p>
               <FileDrop 
                 id="rut" 
                 label="Cargar RUT (Autofill)" 
                 file={files.rut} 
                 onSelect={handleRutSelect} 
-                icon={<Sparkles className="text-amber-500 mb-1" size={20} />}
+                icon={<Sparkles className="text-amber-500 mb-1" size={24} />}
               />
             </div>
             
             <div className="relative">
-            <input 
-              className="w-full p-4 bg-slate-50 border rounded-xl font-bold text-slate-900 placeholder-slate-400 pr-10" 
-              placeholder="Razón Social" 
-              required
-              value={form.razonSocial}
-              onChange={e => setForm({...form, razonSocial: e.target.value.toUpperCase()})}
-              readOnly={extractingId}
-            />
-            {extractingId && <div className="absolute right-3 top-1/2 -translate-y-1/2"><Loader2 className="animate-spin text-equitel-red" /></div>}
-          </div>
-          <div className="relative">
-            <input 
-              className="w-full p-4 bg-slate-50 border rounded-xl font-bold text-slate-900 placeholder-slate-400 pr-10" 
-              placeholder="NIT" 
-              required
-              value={form.nit}
-              onChange={e => setForm({...form, nit: e.target.value})}
-              readOnly={extractingId}
-            />
-          </div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-2 mb-1 block">Razón Social</label>
+              <input 
+                className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-900 placeholder-slate-400 pr-10 focus:ring-2 focus:ring-equitel-red focus:border-transparent outline-none transition-all" 
+                placeholder="Nombre de la empresa" 
+                required
+                value={form.razonSocial}
+                onChange={e => setForm({...form, razonSocial: e.target.value.toUpperCase()})}
+                readOnly={extractingId}
+              />
+              {extractingId && <div className="absolute right-4 top-9"><Loader2 className="animate-spin text-equitel-red" /></div>}
+            </div>
+            <div className="relative">
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-2 mb-1 block">NIT</label>
+              <input 
+                className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-900 placeholder-slate-400 pr-10 focus:ring-2 focus:ring-equitel-red focus:border-transparent outline-none transition-all" 
+                placeholder="000.000.000-0" 
+                required
+                value={form.nit}
+                onChange={e => setForm({...form, nit: e.target.value})}
+                readOnly={extractingId}
+              />
+            </div>
         </div>
 
         <div className="relative">
+          <label className="text-[10px] font-bold text-slate-400 uppercase ml-2 mb-1 block">Asesor Responsable</label>
           <select 
-            className="w-full p-4 bg-slate-50 border rounded-xl font-bold appearance-none text-slate-900"
+            className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold appearance-none text-slate-900 focus:ring-2 focus:ring-equitel-red outline-none"
             required
             onChange={e => setForm({...form, integrante: INTEGRANTES_COMERCIALES.find(i => i.email === e.target.value) || null})}
             value={form.integrante?.email || ""}
@@ -185,7 +190,10 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
 
         {/* Docs Section */}
         <div>
-          <h3 className="text-xs font-black uppercase text-slate-400 tracking-widest mb-4 border-b pb-2">2. Documentación Financiera y Legal</h3>
+          <h3 className="text-xs font-black uppercase text-slate-400 tracking-widest mb-4 border-b pb-2 flex items-center gap-2">
+            <CloudUpload size={14}/> 
+            2. Documentación Financiera y Legal
+          </h3>
           <div className="grid grid-cols-4 gap-4">
             <FileDrop id="ef" label="EE.FF Auditados" file={files.estadosFinancieros} onSelect={f => setFiles({...files, estadosFinancieros: f})} />
             <FileDrop id="cc" label="Cámara Comercio" file={files.camara} onSelect={f => setFiles({...files, camara: f})} />
@@ -232,7 +240,7 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
                  type="button"
                  onClick={handleValidate}
                  disabled={validating || !isFormValid}
-                 className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black hover:bg-indigo-700 disabled:bg-slate-200 transition-all uppercase text-xs flex items-center justify-center gap-2"
+                 className="flex-1 py-5 bg-black text-white rounded-2xl font-black hover:bg-slate-800 disabled:bg-slate-200 transition-all uppercase text-xs flex items-center justify-center gap-2 tracking-widest shadow-lg"
                >
                  {validating ? <Loader2 className="animate-spin" /> : <Search size={18} />}
                  <span>Validar Documentación (IA)</span>
@@ -243,10 +251,10 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
                   <button 
                     type="button"
                     onClick={() => setShowOverridePin(true)}
-                    className="px-6 py-4 bg-red-100 text-red-600 rounded-2xl font-black hover:bg-red-200 transition-all uppercase text-xs flex items-center justify-center gap-2"
+                    className="px-6 py-5 bg-red-100 text-red-600 rounded-2xl font-black hover:bg-red-200 transition-all uppercase text-xs flex items-center justify-center gap-2"
                   >
                     <ShieldAlert size={18} />
-                    <span>Autorizar Excepción (Director)</span>
+                    <span>Autorizar Excepción</span>
                   </button>
                )}
              </div>
@@ -256,7 +264,7 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
                type="button"
                onClick={handleUpload}
                disabled={uploading}
-               className="flex-1 py-4 bg-green-600 text-white rounded-2xl font-black hover:bg-green-700 disabled:bg-slate-200 transition-all uppercase text-xs flex items-center justify-center gap-2 shadow-xl shadow-green-100"
+               className="flex-1 py-5 bg-equitel-red text-white rounded-2xl font-black hover:bg-red-700 disabled:bg-slate-200 transition-all uppercase text-xs flex items-center justify-center gap-2 shadow-xl shadow-red-100 tracking-widest"
              >
                {uploading ? <Loader2 className="animate-spin" /> : <CloudUpload size={18} />}
                <span>Confirmar y Enviar a Drive</span>
@@ -284,20 +292,41 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
   );
 };
 
+// IMPROVED FileDrop: Use the Label as the main container for easier clicking
 const FileDrop = ({ label, file, onSelect, icon, optional = false }: any) => (
-  <div className={`border-2 border-dashed p-4 rounded-2xl text-center cursor-pointer transition-all hover:bg-slate-50 relative overflow-hidden group h-24 flex flex-col items-center justify-center ${file ? 'border-green-500 bg-green-50' : 'border-slate-200 bg-white'} ${!file && optional ? 'opacity-70' : ''}`}>
-    <input type="file" className="hidden" id={label} accept=".pdf,.png,.jpg,.jpeg" onChange={e => onSelect(e.target.files?.[0])} />
-    <label htmlFor={label} className="cursor-pointer w-full h-full flex flex-col items-center justify-center">
-      {file ? (
-        <CheckCircle className="text-green-500 mb-1" size={20} />
-      ) : (
-        icon || <Upload className="text-slate-300 group-hover:scale-110 transition-transform mb-1" size={20} />
-      )}
-      <span className={`text-[8px] font-black uppercase truncate block max-w-full px-1 ${file ? 'text-green-700' : 'text-slate-500'}`}>
-        {file ? file.name : label}
-      </span>
-    </label>
-  </div>
+  <label 
+    htmlFor={label}
+    className={`
+      border-2 border-dashed p-4 rounded-2xl text-center cursor-pointer transition-all hover:bg-slate-50 relative overflow-hidden group h-28 flex flex-col items-center justify-center
+      ${file ? 'border-green-500 bg-green-50' : 'border-slate-200 bg-white'} 
+      ${!file && optional ? 'opacity-70' : ''}
+    `}
+  >
+    <input 
+      type="file" 
+      className="hidden" 
+      id={label} 
+      accept=".pdf,.png,.jpg,.jpeg" 
+      onChange={e => onSelect(e.target.files?.[0])} 
+    />
+    
+    {file ? (
+      <>
+        <CheckCircle className="text-green-500 mb-2" size={24} />
+        <span className="text-[9px] font-black uppercase text-green-700 truncate w-full px-2">
+          {file.name}
+        </span>
+      </>
+    ) : (
+      <>
+        {icon || <Upload className="text-slate-300 group-hover:text-equitel-red group-hover:scale-110 transition-all mb-2" size={24} />}
+        <span className="text-[9px] font-black uppercase text-slate-500 group-hover:text-slate-700">
+          {label}
+        </span>
+        {optional && <span className="text-[8px] text-slate-400 mt-1">(Opcional)</span>}
+      </>
+    )}
+  </label>
 );
 
 export default NewAnalysisFlow;
