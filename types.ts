@@ -77,6 +77,7 @@ export interface CreditAnalysis {
   
   // Google Drive Integration
   driveFolderId?: string; // Stores the ID of the folder created in Step 1
+  driveFolderUrl?: string; // Stores the full URL to open in new tab
 
   // Commercial Data Bucket
   commercialFiles: {
@@ -101,6 +102,7 @@ export interface CreditAnalysis {
   aiResult?: {
     verdict: 'APROBADO' | 'NEGADO';
     suggestedCupo: number;
+    cupoVariables?: CupoVariables;
     justification: string;
     scoreProbability: number; // 0-1
     financialIndicators: FinancialIndicators;
@@ -125,5 +127,6 @@ export interface CreditAnalysis {
 
   // Human Decision
   assignedCupo?: number;
+  assignedPlazo?: number; // NEW: Stores the Director's final decision on payment terms
   rejectionReason?: string;
 }

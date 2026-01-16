@@ -4,7 +4,7 @@ import { UserRole } from '../types';
 import { LogOut, LayoutDashboard, FilePlus, ShieldCheck, Menu, X } from 'lucide-react';
 
 interface LayoutProps {
-  children: React.Node;
+  children: React.ReactNode;
   role: UserRole;
   onReset: () => void;
 }

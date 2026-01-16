@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { UserRole, CreditAnalysis } from './types';
 import RoleSelector from './components/RoleSelector';
@@ -10,7 +11,7 @@ import PINModal from './components/PINModal';
 import SuccessView from './components/SuccessView';
 import { runFullCreditAnalysis } from './services/gemini';
 import { sendEmail } from './services/email';
-import { saveAnalysisToCloud } from './services/server';
+import { saveAnalysisToCloud, exportToDriveAndNotify } from './services/server'; // Added exportToDriveAndNotify
 import { fileToBase64, redondearComercial, formatCOP } from './utils/calculations';
 import CommercialDashboard from './components/CommercialDashboard';
 import { FileText, CheckCircle2, XCircle, Clock, AlertCircle } from 'lucide-react';
@@ -22,6 +23,7 @@ const App: React.FC = () => {
   const [role, setRole] = useState<UserRole | null>(null);
   const [showPIN, setShowPIN] = useState(false);
   const [view, setView] = useState<'LIST' | 'NEW' | 'TASK' | 'DETAIL' | 'SUCCESS'>('LIST');
+  const [successType, setSuccessType] = useState<'COMMERCIAL_CREATED' | 'CARTERA_UPDATED'>('COMMERCIAL_CREATED');
   const [analyses, setAnalyses] = useState<CreditAnalysis[]>(MOCK_DB);
   const [selectedAnalysis, setSelectedAnalysis] = useState<CreditAnalysis | null>(null);
   const [loadingAI, setLoadingAI] = useState(false);
@@ -57,10 +59,11 @@ const App: React.FC = () => {
       const cleanFilesToUpload = filesToUpload.filter(f => f !== null);
 
       // D. Construct Payload for GAS
+      // Use the ID from the newAnalysis (which is "SOL-PENDING" at this point)
       const payload = {
         notificationType: 'COMERCIAL_UPLOAD', // Flag for First Email
         datosCliente: {
-          id: newAnalysis.id,
+          id: newAnalysis.id, 
           clientName: newAnalysis.clientName,
           nit: newAnalysis.nit,
           comercialNombre: newAnalysis.comercial.name,
@@ -72,21 +75,21 @@ const App: React.FC = () => {
         validation: newAnalysis.validationResult
       };
 
-      // E. Send to Cloud & Get Folder ID
+      // E. Send to Cloud & Get Folder ID AND REAL ID
       const response = await saveAnalysisToCloud(payload);
       
-      const analysisWithFolder = {
+      const analysisWithRealId = {
         ...newAnalysis,
-        driveFolderId: response.folderId || undefined 
+        id: response.assignedId || newAnalysis.id, // Update with ID from Backend
+        driveFolderId: response.folderId || undefined,
+        driveFolderUrl: response.urlCarpeta || undefined // CAPTURE URL
       };
 
       // F. Update Local State 
-      setAnalyses(prev => [analysisWithFolder, ...prev]);
+      setAnalyses(prev => [analysisWithRealId, ...prev]);
 
-      // Note: Email sending logic has been moved mostly to Backend, but we keep this for redundancy if needed.
-      // Currently, the App Script handles the detailed email with checklist.
-
-      setSelectedAnalysis(analysisWithFolder);
+      setSelectedAnalysis(analysisWithRealId);
+      setSuccessType('COMMERCIAL_CREATED');
       setView('SUCCESS');
 
     } catch (error: any) {
@@ -135,6 +138,7 @@ const App: React.FC = () => {
         // Update Local State
         setAnalyses(prev => prev.map(a => a.id === updated.id ? { ...a, ...updated, status: 'PENDIENTE_DIRECTOR' } : a));
         setSelectedAnalysis(updated);
+        setSuccessType('CARTERA_UPDATED');
         setView('SUCCESS');
 
     } catch (error: any) {
@@ -155,6 +159,7 @@ const App: React.FC = () => {
          status: analysis.status === 'PENDIENTE_DIRECTOR' ? 'ANALIZADO' : analysis.status,
          indicators: analysis.indicators || analysis.aiResult.financialIndicators,
          cupo: analysis.cupo || { 
+            variables: analysis.aiResult.cupoVariables, // FIX: Map variables correctly from persistent state
             resultadoPromedio: analysis.aiResult.suggestedCupo, 
             cupoConservador: redondearComercial(analysis.aiResult.suggestedCupo * (analysis.aiResult.scoreProbability > 0.5 ? 0.5 : 0.8)),
             cupoLiberal: redondearComercial(analysis.aiResult.suggestedCupo * (analysis.aiResult.scoreProbability > 0.5 ? 0.8 : 1.0)),
@@ -198,9 +203,10 @@ const App: React.FC = () => {
           status: 'ANALIZADO',
           indicators: aiResult.financialIndicators,
           cupo: { 
+             variables: aiResult.cupoVariables, // FIX: Assign the new variables from AI to the state
              resultadoPromedio: aiResult.suggestedCupo, 
-             cupoConservador: redondearComercial(aiResult.suggestedCupo * riskFactor), // Fix Zero Value
-             cupoLiberal: redondearComercial(aiResult.suggestedCupo * liberalFactor),  // Fix Zero Value
+             cupoConservador: redondearComercial(aiResult.suggestedCupo * riskFactor), 
+             cupoLiberal: redondearComercial(aiResult.suggestedCupo * liberalFactor),
              plazoRecomendado: aiResult.financialIndicators.cicloOperacional > 60 ? 45 : 30 
           },
           riskLevel: aiResult.scoreProbability > 0.5 ? 'ALTO' : 'BAJO',
@@ -225,8 +231,51 @@ const App: React.FC = () => {
     }
   };
 
-  const handleFinalDecision = (id: string, action: 'APROBADO' | 'NEGADO', manualCupo?: number, reason?: string) => {
-    setAnalyses(prev => prev.map(a => a.id === id ? { ...a, status: action, assignedCupo: manualCupo, rejectionReason: reason } : a));
+  const handleFinalDecision = async (id: string, action: 'APROBADO' | 'NEGADO', manualCupo?: number, manualPlazo?: number, reason?: string) => {
+    // 1. UPDATE LOCAL STATE
+    setAnalyses(prev => prev.map(a => {
+      if (a.id !== id) return a;
+      
+      const updated: CreditAnalysis = { 
+        ...a, 
+        status: action, 
+        assignedCupo: manualCupo,
+        assignedPlazo: manualPlazo, // Store the deadline
+        rejectionReason: reason 
+      };
+
+      // Also update the nested cupo object for display consistency
+      if (updated.cupo && manualPlazo) {
+        updated.cupo = { ...updated.cupo, plazoRecomendado: manualPlazo };
+      }
+
+      return updated;
+    }));
+
+    // 2. IMMEDIATE SHEET UPDATE (Fire & Forget / Async)
+    const analysis = analyses.find(a => a.id === id);
+    if (analysis) {
+       let detalleLog = "";
+       if (action === 'APROBADO') {
+          detalleLog = `Cupo: ${formatCOP(manualCupo || 0)} - Plazo: ${manualPlazo || 30} días`;
+       } else {
+          detalleLog = "Solicitud Denegada";
+       }
+
+       // We don't await this to keep UI snappy, but we log errors
+       exportToDriveAndNotify({
+         action: 'UPDATE_SHEET',
+         logData: {
+           clientId: id,
+           clientName: analysis.clientName,
+           nit: analysis.nit,
+           comercialName: analysis.comercial.name,
+           detalle: detalleLog,
+           estado: action
+         }
+       }).catch(err => console.error("Failed to update sheet immediately:", err));
+    }
+
     setView('LIST');
   };
 
@@ -261,7 +310,7 @@ const App: React.FC = () => {
         <div className="fixed inset-0 bg-slate-900/90 z-[200] flex flex-col items-center justify-center text-white">
           <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
           <h2 className="text-2xl font-black uppercase tracking-widest">Sincronizando con la Nube</h2>
-          <p className="text-blue-300 mt-2">Carga Segura a Google Drive</p>
+          <p className="text-blue-300 mt-2">Conectando con Google Drive & Gmail</p>
         </div>
       )}
 
@@ -401,6 +450,7 @@ const App: React.FC = () => {
       {view === 'SUCCESS' && selectedAnalysis && (
         <SuccessView 
            id={selectedAnalysis.id} 
+           type={successType}
            onClose={() => setView('LIST')} 
         />
       )}

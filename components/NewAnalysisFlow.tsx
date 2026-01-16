@@ -95,8 +95,10 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
   // STEP 2: UPLOAD TO CLOUD (Only enabled if Validated or Overridden)
   const handleUpload = async () => {
     setUploading(true);
+    
+    // We create the object with a TEMP ID. The server will assign the real SOL-XXXXXX
     const newAnalysis: CreditAnalysis = {
-      id: `SOL-${Date.now().toString().slice(-6)}`,
+      id: `SOL-PENDING`, 
       clientName: form.razonSocial,
       nit: form.nit,
       comercial: form.integrante!,

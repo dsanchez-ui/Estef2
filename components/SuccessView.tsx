@@ -1,35 +1,58 @@
 
 import React from 'react';
-import { CheckCircle, ArrowRight, Share2 } from 'lucide-react';
+import { CheckCircle, ArrowRight, Share2, FileCheck, Send } from 'lucide-react';
 
 interface SuccessViewProps {
   id: string;
+  type: 'COMMERCIAL_CREATED' | 'CARTERA_UPDATED';
   onClose: () => void;
 }
 
-const SuccessView: React.FC<SuccessViewProps> = ({ id, onClose }) => {
+const SuccessView: React.FC<SuccessViewProps> = ({ id, type, onClose }) => {
+  const isCommercial = type === 'COMMERCIAL_CREATED';
+
   return (
     <div className="min-h-[80vh] flex items-center justify-center p-4 animate-in fade-in zoom-in duration-500">
       <div className="max-w-md w-full bg-white rounded-[3rem] shadow-2xl border border-slate-100 p-10 text-center space-y-8">
-        <div className="relative mx-auto w-24 h-24 bg-green-100 rounded-full flex items-center justify-center">
-          <CheckCircle size={48} className="text-green-600 animate-bounce" />
-          <div className="absolute inset-0 bg-green-400 rounded-full animate-ping opacity-20"></div>
+        <div className={`relative mx-auto w-24 h-24 rounded-full flex items-center justify-center ${isCommercial ? 'bg-green-100' : 'bg-blue-100'}`}>
+          {isCommercial ? (
+             <CheckCircle size={48} className="text-green-600 animate-bounce" />
+          ) : (
+             <FileCheck size={48} className="text-blue-600 animate-bounce" />
+          )}
+          <div className={`absolute inset-0 rounded-full animate-ping opacity-20 ${isCommercial ? 'bg-green-400' : 'bg-blue-400'}`}></div>
         </div>
 
         <div className="space-y-4">
-          <h2 className="text-3xl font-black text-slate-900 uppercase tracking-tight">Proceso Iniciado</h2>
+          <h2 className="text-3xl font-black text-slate-900 uppercase tracking-tight">
+            {isCommercial ? "Proceso Iniciado" : "Expediente Avanzado"}
+          </h2>
           <div className="bg-slate-50 py-4 px-6 rounded-2xl border border-slate-100">
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">ID del Análisis</p>
-            <p className="text-2xl font-black text-equitel-red tracking-wider">{id}</p>
+            <p className={`text-2xl font-black tracking-wider ${isCommercial ? 'text-equitel-red' : 'text-blue-600'}`}>{id}</p>
           </div>
           
-          <div className="py-4 space-y-2">
-            <p className="text-slate-700 font-bold text-lg">
-              Solicitud creada exitosamente.
-            </p>
-            <p className="text-slate-500 text-sm leading-relaxed">
-              El caso ha sido transferido al equipo de <span className="font-bold text-slate-700">Cartera</span>, quienes completarán la documentación (Centrales de Riesgo) para avanzar el caso hacia el análisis financiero.
-            </p>
+          <div className="py-4 space-y-4">
+            {isCommercial ? (
+              <>
+                <p className="text-slate-700 font-bold text-lg">Solicitud creada exitosamente.</p>
+                <p className="text-slate-500 text-sm leading-relaxed">
+                  El caso ha sido transferido al equipo de <span className="font-bold text-slate-700">Cartera</span>, quienes completarán la documentación (Centrales de Riesgo) para avanzar el caso hacia el análisis financiero.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-center gap-2 text-blue-600 font-bold bg-blue-50 py-2 rounded-lg">
+                   <Send size={16} /> Enviado a Dirección
+                </div>
+                <p className="text-slate-500 text-sm leading-relaxed">
+                  Has completado la carga de riesgos correctamente. La solicitud ha sido <strong>transferida al Director de Cartera</strong> para su aprobación final.
+                </p>
+                <p className="text-slate-500 text-xs italic bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  ℹ️ El cupo y la aprobación serán visibles una vez el Director complete el análisis.
+                </p>
+              </>
+            )}
           </div>
         </div>
 

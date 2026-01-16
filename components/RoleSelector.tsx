@@ -47,9 +47,6 @@ const RoleSelector: React.FC<RoleSelectorProps> = ({ onSelect }) => {
           </div>
           <h2 className="text-3xl font-black text-black mb-4 tracking-tight">Comercial</h2>
           <p className="text-slate-500 text-sm leading-relaxed mb-8 flex-1">Inicio de solicitud. Carga de documentos legales y financieros básicos.</p>
-          <div className="text-[10px] font-black text-slate-400 bg-slate-50 p-3 rounded-xl inline-block uppercase tracking-widest border border-slate-100">
-            Acceso Restringido
-          </div>
         </button>
 
         {/* Analista Cartera */}

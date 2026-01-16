@@ -3,19 +3,20 @@ import React, { useState, useEffect } from 'react';
 import { CreditAnalysis, FinancialIndicators, UserRole } from '../types';
 import { formatCOP, formatPercent, numberToLetters } from '../utils/calculations';
 import { getAIGuidance } from '../services/gemini';
-import { sendEmail } from '../services/email';
+import { exportToDriveAndNotify } from '../services/server';
 import { generateWelcomeLetterHTML, generateRejectionEmailText } from '../utils/templates';
 import { 
   ArrowLeft, Printer, Sparkles, AlertTriangle, Loader2, DollarSign, 
   TrendingUp, ShieldAlert, Activity, Mail, Download, Copy, CheckCircle,
-  FileText, Send
+  FileText, Send, ExternalLink, Cloud, Calendar
 } from 'lucide-react';
 
 interface AnalysisDetailViewProps {
   analysis: CreditAnalysis;
   userRole: UserRole;
   onBack: () => void;
-  onAction: (id: string, action: 'APROBADO' | 'NEGADO', manualCupo?: number, reason?: string) => void;
+  // Updated signature to accept Plazo
+  onAction: (id: string, action: 'APROBADO' | 'NEGADO', manualCupo?: number, manualPlazo?: number, reason?: string) => void;
 }
 
 const LogoSVG = ({ className = "w-full h-full", color = "black" }: { className?: string, color?: string }) => (
@@ -43,13 +44,17 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
   const [showWelcomeLetter, setShowWelcomeLetter] = useState(false);
   const [aiRec, setAiRec] = useState<string>('');
   const [loadingAi, setLoadingAi] = useState(false);
+  
+  // States for Director Editing
   const [manualCupo, setManualCupo] = useState<number>(analysis.assignedCupo || analysis.cupo?.cupoConservador || 0);
+  const [manualPlazo, setManualPlazo] = useState<number>(analysis.assignedPlazo || analysis.cupo?.plazoRecomendado || 30);
+  
   const [showRiskConfirm, setShowRiskConfirm] = useState(false);
   
-  // States for Email Workflow
-  const [emailTo, setEmailTo] = useState('');
-  const [sendingEmail, setSendingEmail] = useState(false);
-  const [emailSent, setEmailSent] = useState(false);
+  // States for Email/Drive Workflow
+  const [emailTo, setEmailTo] = useState(analysis.comercial.email || '');
+  const [processingAction, setProcessingAction] = useState(false);
+  const [actionStatus, setActionStatus] = useState<{type: 'success' | 'error', msg: string} | null>(null);
 
   useEffect(() => {
     if (userRole === UserRole.DIRECTOR && analysis.status === 'ANALIZADO') {
@@ -69,38 +74,108 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
     if (isHighRisk) {
       setShowRiskConfirm(true);
     } else {
-      onAction(analysis.id, 'APROBADO', manualCupo);
+      onAction(analysis.id, 'APROBADO', manualCupo, manualPlazo);
     }
   };
 
   const handleReject = () => {
     const reason = `Inconsistencias financieras detectadas: ${analysis.flags?.red.map(f => f).join(', ') || 'N/A'}.`;
-    onAction(analysis.id, 'NEGADO', 0, reason);
+    onAction(analysis.id, 'NEGADO', 0, 0, reason);
   };
 
-  const handleSendEmail = async (e: React.FormEvent) => {
+  const handleSendRealEmail = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!emailTo) return;
 
-    setSendingEmail(true);
+    setProcessingAction(true);
+    setActionStatus(null);
     
     let subject = "";
     let body = "";
+    let detalleLog = "";
 
     if (analysis.status === 'APROBADO') {
       subject = `Aprobación de Cupo Grupo Equitel - ${analysis.clientName}`;
       body = generateWelcomeLetterHTML(analysis);
+      detalleLog = `Cupo: ${formatCOP(analysis.assignedCupo || 0)} - Plazo: ${analysis.assignedPlazo} días`;
     } else {
       subject = `Respuesta Solicitud Crédito - ${analysis.clientName}`;
       body = generateRejectionEmailText(analysis).replace(/\n/g, '<br>');
+      detalleLog = "Solicitud Denegada";
     }
 
-    const success = await sendEmail(emailTo, subject, body);
+    const result = await exportToDriveAndNotify({
+      action: 'SEND_EMAIL',
+      emailData: { to: emailTo, subject, body },
+      folderUrl: analysis.driveFolderUrl,
+      // Metadata para el registro en Sheets
+      logData: {
+        clientId: analysis.id,
+        clientName: analysis.clientName,
+        nit: analysis.nit,
+        comercialName: analysis.comercial.name,
+        estado: analysis.status,
+        detalle: detalleLog
+      }
+    });
 
-    setSendingEmail(false);
-    if (success) {
-      setEmailSent(true);
-      setTimeout(() => setEmailSent(false), 3000);
+    setProcessingAction(false);
+    if (result.success) {
+      setActionStatus({ type: 'success', msg: 'Correo enviado exitosamente.' });
+    } else {
+      setActionStatus({ type: 'error', msg: 'Error al enviar correo: ' + result.message });
+    }
+  };
+
+  const handleSaveReportToDrive = async (fileName: string, closeOnSuccess = false) => {
+    const content = document.getElementById('printable-report-container')?.innerHTML;
+    if (!content) {
+      alert("No se pudo generar el contenido del reporte.");
+      return;
+    }
+
+    // Add basic styles for the PDF rendering in GAS
+    const styleBlock = `
+      <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .text-equitel-red { color: #DA291C; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; font-weight: bold; }
+        .font-black { font-weight: 900; }
+        .text-2xl { font-size: 24px; }
+        .text-xl { font-size: 20px; }
+        .text-sm { font-size: 14px; }
+        .text-xs { font-size: 12px; }
+        .uppercase { text-transform: uppercase; }
+        .bg-black { background-color: #000; color: #fff; }
+        .bg-slate-50 { background-color: #f8fafc; }
+        .no-print { display: none; }
+      </style>
+    `;
+
+    const fullHtml = `<html><head>${styleBlock}</head><body>${content}</body></html>`;
+
+    setProcessingAction(true);
+    
+    const result = await exportToDriveAndNotify({
+      action: 'SAVE_REPORT',
+      folderId: analysis.driveFolderId, 
+      folderUrl: analysis.driveFolderUrl, 
+      htmlContent: fullHtml,
+      fileName: `${fileName}_${analysis.clientName}.pdf`
+    });
+
+    setProcessingAction(false);
+
+    if (result.success) {
+      alert("Documento guardado en Google Drive exitosamente.");
+      if (closeOnSuccess) {
+        setShowReport(false);
+        setShowWelcomeLetter(false);
+      }
+    } else {
+      alert("Error guardando en Drive: " + result.message);
     }
   };
 
@@ -109,16 +184,25 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
     alert("Texto copiado al portapapeles");
   };
 
-  const handlePrint = () => {
-    window.print();
-  };
-
   return (
     <div className="space-y-8 max-w-7xl mx-auto pb-24 relative">
       <div className="flex items-center justify-between no-print">
-        <button onClick={onBack} className="flex items-center gap-2 text-slate-500 font-bold hover:text-black transition-colors">
-          <ArrowLeft size={20} /> Volver
-        </button>
+        <div className="flex items-center gap-4">
+          <button onClick={onBack} className="flex items-center gap-2 text-slate-500 font-bold hover:text-black transition-colors">
+            <ArrowLeft size={20} /> Volver
+          </button>
+          {analysis.driveFolderUrl && (
+            <a 
+              href={analysis.driveFolderUrl} 
+              target="_blank" 
+              rel="noreferrer" 
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:text-equitel-red hover:border-equitel-red transition-all shadow-sm"
+            >
+              <ExternalLink size={14} />
+              Ver Carpeta Drive
+            </a>
+          )}
+        </div>
         
         {userRole === UserRole.DIRECTOR && (analysis.status === 'PENDIENTE_DIRECTOR' || analysis.status === 'ANALIZADO') && (
           <div className="flex gap-4">
@@ -138,7 +222,15 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
              <div className="absolute top-0 right-0 p-10 opacity-20">
                <Activity size={120} className="text-equitel-red" />
              </div>
-             <h2 className="text-3xl font-black uppercase mb-2 tracking-tight">{analysis.clientName}</h2>
+             
+             {/* Header with Client Info and Request ID */}
+             <div className="relative z-10 mb-4">
+               <div className="flex items-baseline gap-3">
+                 <h2 className="text-3xl font-black uppercase tracking-tight truncate">{analysis.clientName}</h2>
+                 <span className="text-lg font-bold text-slate-500">{analysis.id}</span>
+               </div>
+             </div>
+
              <div className="flex flex-wrap gap-4 text-sm text-slate-400 font-medium relative z-10">
                <span className="bg-slate-900 border border-slate-800 px-3 py-1 rounded-lg">NIT: {analysis.nit}</span>
                <div className={`flex items-center gap-2 px-3 py-1 rounded-lg text-white font-black uppercase ${
@@ -173,7 +265,7 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                           onClick={() => setShowWelcomeLetter(true)}
                           className="flex-1 py-3 bg-black text-white rounded-xl font-bold text-xs uppercase flex items-center justify-center gap-2 hover:bg-slate-800"
                         >
-                          <Printer size={16} /> Ver PDF
+                          <Printer size={16} /> Ver / Generar PDF
                         </button>
                       </div>
                     </div>
@@ -182,7 +274,7 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                       <h4 className="font-bold text-slate-900 uppercase text-xs mb-4 flex items-center gap-2">
                         <Mail size={16} /> Enviar Notificación
                       </h4>
-                      <form onSubmit={handleSendEmail} className="space-y-3">
+                      <form onSubmit={handleSendRealEmail} className="space-y-3">
                         <input 
                           type="email" 
                           placeholder="Email del Cliente" 
@@ -193,12 +285,17 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                         />
                         <button 
                           type="submit"
-                          disabled={sendingEmail}
+                          disabled={processingAction}
                           className="w-full py-3 bg-green-600 text-white rounded-xl font-bold text-xs uppercase flex items-center justify-center gap-2 hover:bg-green-700 disabled:opacity-50"
                         >
-                          {sendingEmail ? <Loader2 className="animate-spin" /> : <Send size={16} />}
-                          {emailSent ? 'Enviado' : 'Enviar Correo'}
+                          {processingAction ? <Loader2 className="animate-spin" /> : <Send size={16} />}
+                          Enviar Correo Real
                         </button>
+                        {actionStatus && (
+                          <p className={`text-[10px] font-bold ${actionStatus.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                            {actionStatus.msg}
+                          </p>
+                        )}
                       </form>
                     </div>
                   </div>
@@ -238,7 +335,7 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                         <h4 className="font-bold text-slate-900 uppercase text-xs mb-3 flex items-center gap-2">
                           <Mail size={14} /> Enviar Respuesta Directa
                         </h4>
-                        <form onSubmit={handleSendEmail} className="flex gap-3">
+                        <form onSubmit={handleSendRealEmail} className="flex gap-3 items-center">
                           <input 
                             type="email" 
                             placeholder="Email del Cliente" 
@@ -249,12 +346,17 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                           />
                           <button 
                             type="submit"
-                            disabled={sendingEmail}
+                            disabled={processingAction}
                             className="px-6 py-2 bg-black text-white rounded-xl font-bold text-xs uppercase hover:bg-slate-800 disabled:opacity-50"
                           >
-                            {emailSent ? 'Enviado' : 'Enviar'}
+                            {processingAction ? <Loader2 className="animate-spin" /> : 'Enviar'}
                           </button>
                         </form>
+                        {actionStatus && (
+                          <p className={`text-[10px] font-bold mt-2 ${actionStatus.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                            {actionStatus.msg}
+                          </p>
+                        )}
                      </div>
                    </div>
                  </div>
@@ -293,7 +395,9 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                   <Loader2 className="animate-spin" size={16} /> Generando análisis...
                 </div>
               ) : (
-                <p className="text-indigo-800 text-sm leading-relaxed font-medium text-justify">{aiRec}</p>
+                <div className="text-indigo-900 text-sm leading-relaxed font-medium text-justify whitespace-pre-line">
+                  {aiRec}
+                </div>
               )}
             </div>
           )}
@@ -320,8 +424,14 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
               {/* VISIBLE TO ALL: STATUS & APPROVED CUPO */}
               {analysis.status === 'APROBADO' ? (
                  <div className="p-6 rounded-3xl border-2 border-green-500 bg-green-50">
-                    <label className="text-[9px] font-black uppercase mb-2 block text-green-700 tracking-widest">Cupo Otorgado</label>
-                    <p className="text-3xl font-black text-green-900">{formatCOP(analysis.assignedCupo || 0)}</p>
+                    <div className="mb-4 border-b border-green-200 pb-4">
+                        <label className="text-[9px] font-black uppercase mb-2 block text-green-700 tracking-widest">Cupo Otorgado</label>
+                        <p className="text-3xl font-black text-green-900">{formatCOP(analysis.assignedCupo || 0)}</p>
+                    </div>
+                    <div>
+                        <label className="text-[9px] font-black uppercase mb-2 block text-green-700 tracking-widest">Plazo Aprobado</label>
+                        <p className="text-xl font-bold text-green-800">{analysis.assignedPlazo || analysis.cupo?.plazoRecomendado} Días</p>
+                    </div>
                  </div>
               ) : analysis.status === 'NEGADO' ? (
                  <div className="p-6 rounded-3xl border-2 border-red-500 bg-red-50">
@@ -332,7 +442,7 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                   {userRole === UserRole.DIRECTOR ? (
                     <div className={`p-6 rounded-3xl border-2 transition-all ${isHighRisk ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-slate-50'}`}>
                       <label className="text-[9px] font-black uppercase mb-2 block text-slate-500 tracking-widest">Cupo Aprobado (COP)</label>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 mb-6">
                         <span className="text-slate-400 font-bold">$</span>
                         <input 
                           type="number"
@@ -341,6 +451,25 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                           onChange={e => setManualCupo(Number(e.target.value))}
                         />
                       </div>
+                      
+                      {/* NEW: Plazo Editing Slider */}
+                      <label className="text-[9px] font-black uppercase mb-2 block text-slate-500 tracking-widest">Plazo de Pago (Días)</label>
+                      <div className="flex items-center gap-4 mb-2">
+                        <input 
+                          type="range" 
+                          min="0" 
+                          max="120" 
+                          step="15"
+                          value={manualPlazo} 
+                          onChange={e => setManualPlazo(Number(e.target.value))}
+                          className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-equitel-red"
+                        />
+                        <div className="w-16 bg-white rounded-lg border border-slate-200 p-1 flex items-center justify-center font-bold text-slate-900">
+                            {manualPlazo}
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-slate-400 text-right">Sugerido IA: {analysis.cupo?.plazoRecomendado} días</p>
+
                       {isHighRisk && (
                         <div className="mt-4 flex items-center gap-2 text-red-600 animate-pulse">
                           <AlertTriangle size={14} />
@@ -359,7 +488,9 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
 
               {userRole === UserRole.DIRECTOR && analysis.cupo && (
                 <div className="pt-4 border-t border-slate-100">
-                   <p className="text-xs font-bold text-slate-500 mb-2">Plazo Sugerido</p>
+                   <p className="text-xs font-bold text-slate-500 mb-2 flex items-center gap-2">
+                     <Calendar size={14} /> Plazo Sugerido (Ciclo Operacional)
+                   </p>
                    <div className="flex items-center gap-2">
                      <div className="h-2 flex-1 bg-slate-100 rounded-full overflow-hidden">
                        <div className="h-full bg-slate-900 w-1/2"></div>
@@ -372,7 +503,7 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
 
             {userRole === UserRole.DIRECTOR && (
               <button onClick={() => setShowReport(true)} className="w-full mt-8 py-4 bg-black text-white rounded-xl font-bold flex items-center justify-center gap-3 hover:bg-slate-800 transition-all text-xs uppercase tracking-widest shadow-lg">
-                 <Printer size={16} /> Imprimir Informe Interno
+                 <Cloud size={16} /> Ver / Guardar Informe
               </button>
             )}
           </div>
@@ -390,7 +521,7 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
             <div className="flex gap-4">
               <button onClick={() => setShowRiskConfirm(false)} className="flex-1 py-4 font-bold text-slate-400 hover:text-slate-600 transition-colors uppercase text-xs tracking-widest">Cancelar</button>
               <button 
-                onClick={() => onAction(analysis.id, 'APROBADO', manualCupo)} 
+                onClick={() => onAction(analysis.id, 'APROBADO', manualCupo, manualPlazo)} 
                 className="flex-1 py-4 bg-red-600 text-white rounded-2xl font-black hover:bg-red-700 transition-colors uppercase text-xs tracking-widest shadow-lg shadow-red-200"
               >
                 Sí, Proceder
@@ -402,13 +533,20 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
 
       {(showReport || showWelcomeLetter) && (
         <div id="printable-report-container" className="fixed inset-0 bg-white z-[200] overflow-y-auto">
-          <div className="min-h-screen bg-slate-100 flex flex-col items-center pt-8 pb-8 no-print">
+          <div className="min-h-screen bg-slate-100 flex flex-col items-center pt-8 pb-8">
              <div className="fixed top-4 right-4 flex gap-2 z-50">
-               <button onClick={handlePrint} className="bg-black text-white px-6 py-3 rounded-full font-bold shadow-lg hover:bg-slate-800 flex items-center gap-2">
-                 <Printer size={18} /> Imprimir / Guardar PDF
+               {/* NEW BUTTON: SAVE TO DRIVE */}
+               <button 
+                  onClick={() => handleSaveReportToDrive(showWelcomeLetter ? "Carta_Bienvenida" : "Informe_Credito", true)} 
+                  disabled={processingAction}
+                  className="bg-black text-white px-6 py-3 rounded-full font-bold shadow-lg hover:bg-slate-800 flex items-center gap-2"
+               >
+                 {processingAction ? <Loader2 className="animate-spin" /> : <Cloud size={18} />}
+                 Guardar PDF en Drive
                </button>
+               
                <button onClick={() => { setShowReport(false); setShowWelcomeLetter(false); }} className="bg-white text-slate-900 px-6 py-3 rounded-full font-bold shadow-lg hover:bg-slate-50">
-                 Cerrar
+                 Cerrar Vista Previa
                </button>
              </div>
 
@@ -443,6 +581,12 @@ const InternalReport = ({ analysis, manualCupo }: { analysis: CreditAnalysis, ma
         <p className="text-sm font-black text-slate-900">{analysis.id}</p>
         <p className="text-xs font-bold text-slate-400 uppercase mt-2">Fecha</p>
         <p className="text-sm font-black text-slate-900">{new Date().toLocaleDateString()}</p>
+        {analysis.assignedPlazo && (
+          <>
+             <p className="text-xs font-bold text-slate-400 uppercase mt-2">Plazo Aprobado</p>
+             <p className="text-sm font-black text-slate-900">{analysis.assignedPlazo} Días</p>
+          </>
+        )}
       </div>
     </div>
 
@@ -509,6 +653,12 @@ const InternalReport = ({ analysis, manualCupo }: { analysis: CreditAnalysis, ma
               <p className="text-xs font-black uppercase text-slate-900">John Deyver Campos Moya</p>
               <p className="text-[10px] font-bold text-slate-400 uppercase">Director Nacional de Cartera</p>
             </div>
+          </div>
+          <div className="mt-4 flex justify-between">
+              <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase">Plazo de Pago</p>
+                  <p className="text-xl font-black text-slate-900">{analysis.assignedPlazo || analysis.cupo?.plazoRecomendado} Días</p>
+              </div>
           </div>
         </div>
       </section>

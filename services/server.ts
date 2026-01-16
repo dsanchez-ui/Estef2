@@ -42,3 +42,43 @@ export const saveAnalysisToCloud = async (payload: any): Promise<any> => {
     throw error instanceof Error ? error : new Error(String(error));
   }
 };
+
+interface BackendActionPayload {
+  action: 'SAVE_REPORT' | 'SEND_EMAIL' | 'UPDATE_SHEET';
+  folderUrl?: string; 
+  folderId?: string; 
+  htmlContent?: string;
+  fileName?: string;
+  emailData?: {
+    to: string;
+    subject: string;
+    body: string; 
+  };
+  // NEW: Metadata for Sheet Logging
+  logData?: {
+    clientId: string;
+    clientName: string;
+    nit: string;
+    comercialName?: string;
+    detalle: string; // e.g., "Cupo Aprobado: $50M"
+    estado: string; // e.g., "APROBADO"
+  };
+}
+
+export const exportToDriveAndNotify = async (payload: BackendActionPayload): Promise<{ success: boolean; message: string }> => {
+  try {
+    const response = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ backendAction: payload }) 
+    });
+
+    const result = await response.json();
+    if (!result.success) throw new Error(result.error || "Error desconocido en backend");
+    
+    return { success: true, message: result.message };
+  } catch (error: any) {
+    console.error("Backend Action Failed:", error);
+    return { success: false, message: error.message };
+  }
+};

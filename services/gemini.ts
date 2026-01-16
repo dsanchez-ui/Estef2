@@ -108,7 +108,6 @@ export const validateCommercialDocuments = async (files: File[], clientName: str
 
   Retorna SOLAMENTE un JSON válido.`;
 
-  // Use gemini-3-pro-preview for complex reasoning and set temperature to 0 for consistency
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: [{ parts: [...parts, { text: prompt }] }],
@@ -357,50 +356,76 @@ export const runFullCreditAnalysis = async (allFiles: File[], clientName: string
   const parts: any[] = partsResults.filter(p => p !== null);
 
   const prompt = `
-Actúa como Estefanía 2.0, el sistema experto de riesgo de Equitel. Analiza los documentos financieros y legales adjuntos (PDF/Excel) para el cliente "${clientName}" (NIT: ${nit}).
-  
-  TU MISIÓN: Ejecutar una simulación de modelo predictivo y calcular el cupo de crédito exacto siguiendo estrictamente las reglas de negocio descritas abajo.
+  ERES ESTEFANÍA 2.0, EXPERTA EN ANÁLISIS DE CRÉDITO CORPORATIVO (GRUPO EQUITEL).
+  Analiza los documentos financieros y reportes de riesgo adjuntos (DataCrédito, Informa, Balances, etc.) para el cliente "${clientName}" (NIT: ${nit}).
 
-  ### 1. MODELO PREDICTIVO DE MORA (Simulación XGBoost)
-  Extrae las variables de entrada y estima la probabilidad de incumplimiento (0 a 1) basada en el perfil financiero:
-  - **Inputs a evaluar:** Ingresos anuales, Activos Totales, Pasivos Totales, Sector Económico (inferido), Mora Histórica (buscar en reportes), Antigüedad, Score Centrales de Riesgo y Volumen de Operaciones.
-  - **Salida:** 'scoreProbability' (number 0-1).
+  ### 🚨 MISIÓN CRÍTICA: EXTRACCIÓN DE CUPO
+  **¡NO INVENTES DATOS PERO TAMPOCO DEJES LOS CAMPOS EN CERO SI HAY INFORMACIÓN FINANCIERA!**
 
-  ### 2. CÁLCULO DE RATIOS FINANCIEROS (Completo)
-  Extrae datos de los Estados Financieros (Año más reciente) y calcula:
-  - **Liquidez:** Razón Corriente, Prueba Ácida, Capital de Trabajo Neto (KNT).
-  - **Endeudamiento:** Global, Corto Plazo (CP), Largo Plazo (LP).
-  - **Rentabilidad:** Margen Bruto, Operacional, Neto, ROA, ROE.
-  - **Operación:** Días Cartera, Días Inventario, Ciclo Operacional, Rotación de Activos.
-  - **Otros:** Solvencia (Pasivo/Patrimonio), EBITDA, Z-Altman Score (Colombia Mfg/Service).
+  1. **BUSCA EN LOS ADJUNTOS:** 
+     - **DATACRÉDITO:** Busca textos como "Cupo sugerido", "OtorgA", "Cupo línea", "Endeudamiento sugerido".
+     - **INFORMA COLOMBIA:** Busca "Opinión de Crédito", "Límite Recomendado" o "Cupo Máximo".
+     - **ESTADOS FINANCIEROS:** Extrae Utilidad Neta, EBITDA, Ingresos.
+
+  2. **REGLA DE ESTIMACIÓN (SI FALTA DATACRÉDITO/INFORMA):**
+     - Si NO encuentras el reporte de Datacrédito o Informa explícito, **NO PONGAS CERO**.
+     - Estima el cupo de riesgo externo como el **5% de los INGRESOS OPERACIONALES ANUALES** encontrados en los Estados Financieros.
 
   ### 3. CÁLCULO DE CUPO SUGERIDO (REGLA DE LOS 6 INDICADORES)
-  Calcula el cupo final como el PROMEDIO de las siguientes 6 variables. Si un dato no existe, asume 0 para ese componente.
+  Calcula el cupo final como el PROMEDIO de las siguientes 6 variables:
   
-  1. **Datacrédito (Ponderado):** (Promedio de cupos últimos 3 periodos en reporte) * 10%.
-  2. **OtorgA (Plataforma):** Valor directo "Cupo" u "OtorgA" que aparece al final del informe Datacrédito (en miles, conviértelo a pesos completos).
-  3. **Opinión Informa (Ponderado):** (Opinión de Crédito / Cupo Máximo Recomendado del informe Informa) * 10%.
-     *NOTA: ¡No alucines! Usa estrictamente el 10% de la opinión, no uses la fórmula antigua de patrimonio.*
+  1. **Datacrédito (Ponderado):** (Promedio de cupos últimos 3 periodos en reporte * 10%) O (OtorgA * 10%). Si no hay reporte, usa 5% Ingresos * 10%.
+  2. **OtorgA (Plataforma):** Valor directo "Cupo" u "OtorgA" (Datacrédito). Si no existe, usa 2% Ingresos.
+  3. **Opinión Informa (Ponderado):** (Opinión de Crédito * 10%). Si no hay, usa 5% Ingresos * 10%.
   4. **Utilidad Neta Mensual:** (Utilidad Neta del último año) / 12.
   5. **Referencias Comerciales:** Promedio de los valores reportados en las referencias adjuntas.
   6. **Cupo Mensual Operativo:** ((EBITDA - Impuestos - GastosFinancieros + Efectivo) / 2) / 12.
-     *(Nota: Si impuestos no es explícito, usa 35% de Utilidad Ante Impuestos).*
+
+  ### 📝 FORMATO DE JUSTIFICACIÓN (OBLIGATORIO)
+  El campo "justification" debe ser un string formateado EXACTAMENTE así:
+  
+  "🟢 Banderas Verdes:
+  - [Punto positivo 1]
+  - [Punto positivo 2]
+  
+  🔴 Banderas Rojas:
+  - [Riesgo detectado 1]
+  - [Riesgo detectado 2]
+  
+  📋 Resumen:
+  [Breve párrafo de conclusión]"
 
   ### SALIDA JSON REQUERIDA
-  Retorna UNICAMENTE un objeto JSON con esta estructura exacta. Asegúrate de incluir flags rojas y verdes.
   `;
 
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: [{ parts: [...parts, { text: prompt }] }],
     config: {
-      temperature: 0, // Deterministic
+      temperature: 0.1, // Low temp for precision
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
         properties: {
           verdict: { type: Type.STRING, enum: ["APROBADO", "NEGADO"] },
           suggestedCupo: { type: Type.NUMBER },
+          
+          // ADDED: Explicit breakdown for the 6 indicators
+          cupoVariables: {
+            type: Type.OBJECT,
+            properties: {
+              v1_datacredito_avg: { type: Type.NUMBER, description: "Promedio reportes Datacredito" },
+              v1_weighted: { type: Type.NUMBER, description: "Datacredito Ponderado (10%)" },
+              v2_otorga: { type: Type.NUMBER, description: "Valor OtorgA o Cupo Score" },
+              v3_informa_max: { type: Type.NUMBER, description: "Opinión Informa" },
+              v3_weighted: { type: Type.NUMBER, description: "Opinión Informa Ponderada (10%)" },
+              v4_utilidad_mensual: { type: Type.NUMBER, description: "Utilidad Neta / 12" },
+              v5_referencias_avg: { type: Type.NUMBER, description: "Promedio referencias encontradas" },
+              v6_ebitda_monthly: { type: Type.NUMBER, description: "Capacidad pago mensual operativa" }
+            },
+            required: ["v1_weighted", "v2_otorga", "v3_weighted", "v4_utilidad_mensual", "v5_referencias_avg", "v6_ebitda_monthly"]
+          },
+          
           scoreProbability: { type: Type.NUMBER, description: "Probabilidad de mora 0-1" },
           justification: { type: Type.STRING },
           financialIndicators: {
@@ -430,8 +455,8 @@ Actúa como Estefanía 2.0, el sistema experto de riesgo de Equitel. Analiza los
           flags: {
             type: Type.OBJECT,
             properties: {
-              green: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Banderas Verdes (Obligatorio)" },
-              red: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Banderas Rojas (Obligatorio)" }
+              green: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Lista de aspectos positivos" },
+              red: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Lista de riesgos" }
             },
             required: ["green", "red"]
           }
