@@ -261,13 +261,26 @@ function handleBackendAction(data) {
   return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
 }
 
-// ---- PLANTILLAS INTERNAS CON 3 BOTONES ----
+// ---- PLANTILLAS INTERNAS PREMIUM (CSS INLINED) ----
 function getActionButtonsHtml(linkDrive) {
   return `
-    <div style="text-align: center; margin: 30px 0;">
-       <a href="${linkDrive}" style="display: inline-block; background: #333; color: white; padding: 12px 18px; text-decoration: none; margin: 5px; border-radius: 6px; font-weight: bold; font-size: 14px;">📂 Ver Carpeta Drive</a>
-       <a href="${LINK_SHEETS}" style="display: inline-block; background: #108043; color: white; padding: 12px 18px; text-decoration: none; margin: 5px; border-radius: 6px; font-weight: bold; font-size: 14px;">📊 Ver Excel (Sheets)</a>
-       <a href="${LINK_APP}" style="display: inline-block; background: #DA291C; color: white; padding: 12px 18px; text-decoration: none; margin: 5px; border-radius: 6px; font-weight: bold; font-size: 14px;">📱 Ir al Aplicativo</a>
+    <div style="text-align: center; margin-top: 25px; margin-bottom: 25px;">
+       <table width="100%" cellspacing="0" cellpadding="0">
+         <tr>
+           <td align="center">
+             <a href="${linkDrive}" style="background-color: #333333; color: #ffffff; padding: 14px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px; display: inline-block; mso-padding-alt:0; margin: 5px;">
+               <!--[if mso]><i style="letter-spacing: 25px; mso-font-width: -100%; mso-text-raise: 30pt">&nbsp;</i><![endif]-->
+               <span style="mso-text-raise: 15pt;">📂 Ver Carpeta Drive</span>
+               <!--[if mso]><i style="letter-spacing: 25px; mso-font-width: -100%">&nbsp;</i><![endif]-->
+             </a>
+             <a href="${LINK_APP}" style="background-color: #DA291C; color: #ffffff; padding: 14px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px; display: inline-block; mso-padding-alt:0; margin: 5px;">
+               <!--[if mso]><i style="letter-spacing: 25px; mso-font-width: -100%; mso-text-raise: 30pt">&nbsp;</i><![endif]-->
+               <span style="mso-text-raise: 15pt;">📱 Gestionar en App</span>
+               <!--[if mso]><i style="letter-spacing: 25px; mso-font-width: -100%">&nbsp;</i><![endif]-->
+             </a>
+           </td>
+         </tr>
+       </table>
     </div>
   `;
 }
@@ -279,32 +292,71 @@ function enviarCorreoComercial(cliente, linkDrive, numArchivos, validacion) {
   
   let checklistHtml = "";
   if (validacion && validacion.results) {
-    checklistHtml += `<ul style="list-style: none; padding: 0;">`;
+    checklistHtml += `<ul style="list-style: none; padding: 0; margin: 0;">`;
     validacion.results.forEach(doc => {
+      const color = doc.isValid ? "#108043" : "#d32f2f";
       const icon = doc.isValid ? "✅" : "❌";
-      checklistHtml += `<li style="padding: 5px 0;">${icon} <strong>${doc.fileName}</strong>: ${doc.isValid ? "OK" : doc.issue}</li>`;
+      checklistHtml += `
+        <li style="padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px;">
+          <span style="margin-right: 8px;">${icon}</span>
+          <strong style="color: #333;">${doc.fileName}</strong>
+          <span style="color: ${color}; float: right;">${doc.isValid ? "OK" : "Revisar"}</span>
+        </li>`;
     });
     checklistHtml += `</ul>`;
   }
 
   const htmlBody = `
-    <div style="font-family: Arial; color: #333; max-width: 600px; border: 1px solid #ddd; background-color: white;">
-      <div style="background-color: #DA291C; padding: 25px; color: white; text-align: center;">
-         <h2 style="margin:0;">ESTEFANÍA 2.0</h2>
-         <p style="margin:5px 0 0 0; opacity: 0.9;">Solicitud Comercial #${radicado}</p>
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 20px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .header { background-color: #DA291C; padding: 30px 20px; text-align: center; color: white; }
+        .content { padding: 30px; }
+        .card { background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        .label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #6b7280; font-weight: bold; margin-bottom: 4px; display: block; }
+        .value { font-size: 16px; color: #111827; font-weight: bold; margin: 0; }
+        .footer { background-color: #f9fafb; padding: 20px; text-align: center; color: #9ca3af; font-size: 12px; border-top: 1px solid #e5e7eb; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+           <h1 style="margin: 0; font-size: 24px; font-weight: 900; letter-spacing: -0.5px;">ESTEFANÍA 2.0</h1>
+           <p style="margin: 5px 0 0 0; opacity: 0.9; font-size: 14px;">Solicitud Comercial #${radicado}</p>
+        </div>
+        <div class="content">
+          <div class="card">
+             <div style="margin-bottom: 15px;">
+               <span class="label">CLIENTE</span>
+               <p class="value">${nombreCliente}</p>
+             </div>
+             <div style="margin-bottom: 15px;">
+               <span class="label">NIT</span>
+               <p class="value">${cliente.nit}</p>
+             </div>
+             <div>
+               <span class="label">SOLICITANTE</span>
+               <p class="value">${cliente.comercialNombre}</p>
+             </div>
+          </div>
+          
+          <div class="card" style="background-color: #ffffff; border-color: #e5e7eb;">
+             <span class="label" style="margin-bottom: 10px; display: block;">Checklist Documental (IA)</span>
+             ${checklistHtml}
+          </div>
+          
+          ${getActionButtonsHtml(linkDrive)}
+        </div>
+        <div class="footer">
+           &copy; 2025 Organización Equitel S.A. <br>Sistema Automático de Crédito y Cartera
+        </div>
       </div>
-      <div style="padding: 25px;">
-        <p>Cliente: <strong>${nombreCliente}</strong> (NIT: ${cliente.nit})</p>
-        <p>Comercial: ${cliente.comercialNombre}</p>
-        <div style="background: #f9f9f9; padding: 15px; margin: 20px 0; border-radius: 8px;">${checklistHtml}</div>
-        
-        ${getActionButtonsHtml(linkDrive)}
-        
-        <p style="font-size: 11px; color: #888; text-align: center; margin-top: 20px;">
-           Este correo fue generado automáticamente por el sistema de Crédito y Cartera Equitel.
-        </p>
-      </div>
-    </div>
+    </body>
+    </html>
   `;
 
   MailApp.sendEmail({ to: EMAILS_NOTIFICACION, subject: asunto, htmlBody: htmlBody });
@@ -316,23 +368,52 @@ function enviarCorreoRiesgo(cliente, linkDrive, numArchivos) {
   const asunto = `⚠️ Actualización Riesgo [${radicado}]: ${nombreCliente}`;
 
   const htmlBody = `
-    <div style="font-family: Arial; color: #333; max-width: 600px; border: 1px solid #ddd; background-color: white;">
-      <div style="background-color: #0056b3; padding: 25px; color: white; text-align: center;">
-         <h2 style="margin:0;">ESTEFANÍA 2.0</h2>
-         <p style="margin:5px 0 0 0; opacity: 0.9;">Expediente Listo para Análisis</p>
-      </div>
-      <div style="padding: 25px;">
-        <p>Solicitud: <strong>${radicado}</strong></p>
-        <p>El equipo de Cartera ha cargado <strong>${numArchivos} archivos de riesgo</strong> para el cliente <strong>${nombreCliente}</strong>.</p>
-        <p>El expediente cumple con los requisitos y está listo para la decisión del Director.</p>
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 20px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .header { background-color: #0f172a; padding: 30px 20px; text-align: center; color: white; }
+        .content { padding: 30px; }
+        .card { background-color: #eff6ff; border: 1px solid #dbeafe; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        .label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #64748b; font-weight: bold; margin-bottom: 4px; display: block; }
+        .value { font-size: 16px; color: #1e293b; font-weight: bold; margin: 0; }
+        .footer { background-color: #f9fafb; padding: 20px; text-align: center; color: #9ca3af; font-size: 12px; border-top: 1px solid #e5e7eb; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+           <h1 style="margin: 0; font-size: 24px; font-weight: 900; letter-spacing: -0.5px;">ESTEFANÍA 2.0</h1>
+           <p style="margin: 5px 0 0 0; opacity: 0.9; font-size: 14px;">Expediente Listo para Análisis</p>
+        </div>
+        <div class="content">
+          <p style="font-size: 15px; line-height: 1.5; color: #374151; text-align: center; margin-bottom: 25px;">
+            El equipo de Cartera ha completado la carga de centrales de riesgo.<br>
+            El análisis financiero de IA se ha ejecutado exitosamente.
+          </p>
         
-        ${getActionButtonsHtml(linkDrive)}
-        
-        <p style="font-size: 11px; color: #888; text-align: center; margin-top: 20px;">
-           Este correo fue generado automáticamente por el sistema de Crédito y Cartera Equitel.
-        </p>
+          <div class="card">
+             <div style="margin-bottom: 15px;">
+               <span class="label">CLIENTE</span>
+               <p class="value">${nombreCliente}</p>
+             </div>
+             <div>
+               <span class="label">ESTADO ACTUAL</span>
+               <p class="value" style="color: #2563eb;">PENDIENTE DIRECTOR</p>
+             </div>
+          </div>
+          
+          ${getActionButtonsHtml(linkDrive)}
+        </div>
+        <div class="footer">
+           &copy; 2025 Organización Equitel S.A. <br>Sistema Automático de Crédito y Cartera
+        </div>
       </div>
-    </div>
+    </body>
+    </html>
   `;
 
   MailApp.sendEmail({ to: EMAILS_NOTIFICACION, subject: asunto, htmlBody: htmlBody });

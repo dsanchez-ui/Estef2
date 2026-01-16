@@ -19,6 +19,18 @@ import { FileText, CheckCircle2, XCircle, Clock, AlertCircle } from 'lucide-reac
 // Mock Data for Demo
 const MOCK_DB: CreditAnalysis[] = [];
 
+// Global Loading Overlay Component
+const LoadingOverlay = ({ visible, message }: { visible: boolean, message: string }) => {
+    if (!visible) return null;
+    return (
+        <div className="fixed inset-0 bg-slate-950/90 z-[9999] flex flex-col items-center justify-center text-white backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="w-20 h-20 border-4 border-equitel-red border-t-transparent rounded-full animate-spin mb-6"></div>
+          <h2 className="text-2xl font-black uppercase tracking-widest text-center max-w-md leading-tight">{message}</h2>
+          <p className="text-slate-400 mt-4 text-sm font-bold uppercase tracking-wide animate-pulse">Por favor NO recargues la página</p>
+        </div>
+    );
+};
+
 const App: React.FC = () => {
   const [role, setRole] = useState<UserRole | null>(null);
   const [showPIN, setShowPIN] = useState(false);
@@ -26,8 +38,10 @@ const App: React.FC = () => {
   const [successType, setSuccessType] = useState<'COMMERCIAL_CREATED' | 'CARTERA_UPDATED'>('COMMERCIAL_CREATED');
   const [analyses, setAnalyses] = useState<CreditAnalysis[]>(MOCK_DB);
   const [selectedAnalysis, setSelectedAnalysis] = useState<CreditAnalysis | null>(null);
-  const [loadingAI, setLoadingAI] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  
+  // Consolidated Loading State
+  const [globalLoading, setGlobalLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState("");
 
   // Global Configuration State
   const [notificationEmails, setNotificationEmails] = useState("dsanchez@equitel.com.co");
@@ -40,10 +54,10 @@ const App: React.FC = () => {
 
   // 1. Comercial Flow: Submit New Request -> Cloud Upload -> Notification
   const handleCommercialSubmit = async (newAnalysis: CreditAnalysis) => {
-    setUploading(true);
+    setGlobalLoading(true);
+    setLoadingMessage("Sincronizando documentos comerciales con la Nube...");
+    
     try {
-      console.log("Iniciando carga en Nube (Comercial)...");
-
       // C. Prepare Files for Cloud (Convert to Base64)
       const filesToUpload = await Promise.all(
         Object.entries(newAnalysis.commercialFiles).map(async ([key, file]) => {
@@ -96,17 +110,17 @@ const App: React.FC = () => {
       alert("Error crítico al subir: " + error.message);
       console.error(error);
     } finally {
-      setUploading(false);
+      setGlobalLoading(false);
     }
   };
 
-  // 2. Cartera Flow: Advance Request -> Upload Risk Files to SAME Folder -> Trigger Second Email
+  // 2. Cartera Flow: Advance Request -> Upload -> EXECUTE AI -> Save Result
   const handleCarteraAdvance = async (updated: CreditAnalysis) => {
-    setUploading(true);
+    setGlobalLoading(true);
+    
     try {
-        console.log("Iniciando carga en Nube (Cartera)...");
-
-        // Prepare Risk Files
+        // STEP A: Prepare Files
+        setLoadingMessage("Subiendo documentos de riesgo a Google Drive...");
         const filesToUpload = await Promise.all(
             Object.entries(updated.riskFiles).map(async ([key, file]) => {
               if (!file || !(file instanceof File)) return null;
@@ -119,91 +133,27 @@ const App: React.FC = () => {
         );
         const cleanFilesToUpload = filesToUpload.filter(f => f !== null);
 
-        // Construct Payload with existing Folder ID AND Notification Trigger
-        const payload = {
-            targetFolderId: updated.driveFolderId,
-            notificationType: 'RIESGO_UPLOAD', // TRIGGER FOR SECOND EMAIL
-            datosCliente: {
-                id: updated.id,
-                clientName: updated.clientName, 
-                nit: updated.nit,
-                estado: 'PENDIENTE_DIRECTOR'
-            },
-            archivos: cleanFilesToUpload
-        };
-
-        // Upload
-        await saveAnalysisToCloud(payload);
-
-        // Update Local State
-        setAnalyses(prev => prev.map(a => a.id === updated.id ? { ...a, ...updated, status: 'PENDIENTE_DIRECTOR' } : a));
-        setSelectedAnalysis(updated);
-        setSuccessType('CARTERA_UPDATED');
-        setView('SUCCESS');
-
-    } catch (error: any) {
-        alert("Error subiendo archivos de riesgo: " + error.message);
-    } finally {
-        setUploading(false);
-    }
-  };
-
-  // 3. Director Flow: Run AI Analysis
-  const handleDirectorOpen = async (analysis: CreditAnalysis) => {
-    // PERSISTENCE CHECK:
-    if (analysis.aiResult) {
-       console.log("Cargando análisis existente de base de datos local...");
-       
-       const readyAnalysis: CreditAnalysis = {
-         ...analysis,
-         status: analysis.status === 'PENDIENTE_DIRECTOR' ? 'ANALIZADO' : analysis.status,
-         indicators: analysis.indicators || analysis.aiResult.financialIndicators,
-         cupo: analysis.cupo || { 
-            variables: analysis.aiResult.cupoVariables, // FIX: Map variables correctly from persistent state
-            resultadoPromedio: analysis.aiResult.suggestedCupo, 
-            cupoConservador: redondearComercial(analysis.aiResult.suggestedCupo * (analysis.aiResult.scoreProbability > 0.5 ? 0.5 : 0.8)),
-            cupoLiberal: redondearComercial(analysis.aiResult.suggestedCupo * (analysis.aiResult.scoreProbability > 0.5 ? 0.8 : 1.0)),
-            plazoRecomendado: analysis.aiResult.financialIndicators.cicloOperacional > 60 ? 45 : 30 
-         },
-         riskLevel: analysis.riskLevel || (analysis.aiResult.scoreProbability > 0.5 ? 'ALTO' : 'BAJO'),
-         moraProbability: analysis.moraProbability || (analysis.aiResult.scoreProbability * 100).toFixed(1) + '%',
-         flags: analysis.flags || analysis.aiResult.flags
-       };
-       
-       if (analysis.status === 'PENDIENTE_DIRECTOR') {
-          setAnalyses(prev => prev.map(a => a.id === analysis.id ? readyAnalysis : a));
-       }
-       
-       setSelectedAnalysis(readyAnalysis);
-       setView('DETAIL');
-       return;
-    }
-
-    // Run AI
-    if (analysis.status === 'PENDIENTE_DIRECTOR' || analysis.status === 'ANALIZADO') {
-      setLoadingAI(true);
-      try {
+        // STEP B: Run Full AI Analysis (One Shot)
+        setLoadingMessage("Ejecutando Análisis Financiero Estefanía IA (Esto puede tomar unos segundos)...");
+        
         const allFiles = [
-            ...Object.values(analysis.commercialFiles || {}), 
-            ...Object.values(analysis.riskFiles || {})
+            ...Object.values(updated.commercialFiles || {}), 
+            ...Object.values(updated.riskFiles || {})
         ].filter((f): f is File => f instanceof File);
 
-        if (allFiles.length === 0) {
-            throw new Error("No hay archivos cargados en memoria para analizar.");
-        }
-
-        const aiResult = await runFullCreditAnalysis(allFiles, analysis.clientName, analysis.nit);
+        const aiResult = await runFullCreditAnalysis(allFiles, updated.clientName, updated.nit);
         
         // Calculate ranges based on the average if AI doesn't give them explicit
-        const riskFactor = aiResult.scoreProbability > 0.5 ? 0.5 : 0.8; // High Risk = 50% of avg, Low Risk = 80%
+        const riskFactor = aiResult.scoreProbability > 0.5 ? 0.5 : 0.8; 
         const liberalFactor = aiResult.scoreProbability > 0.5 ? 0.8 : 1.0; 
 
+        // Enriched Object
         const analyzedAnalysis: CreditAnalysis = {
-          ...analysis,
-          status: 'ANALIZADO',
+          ...updated,
+          status: 'ANALIZADO', // Ready for Director immediately
           indicators: aiResult.financialIndicators,
           cupo: { 
-             variables: aiResult.cupoVariables, // FIX: Assign the new variables from AI to the state
+             variables: aiResult.cupoVariables, 
              resultadoPromedio: aiResult.suggestedCupo, 
              cupoConservador: redondearComercial(aiResult.suggestedCupo * riskFactor), 
              cupoLiberal: redondearComercial(aiResult.suggestedCupo * liberalFactor),
@@ -215,45 +165,73 @@ const App: React.FC = () => {
           aiResult: aiResult // Save result for persistence
         };
 
-        setAnalyses(prev => prev.map(a => a.id === analysis.id ? analyzedAnalysis : a));
-        setSelectedAnalysis(analyzedAnalysis);
-        setView('DETAIL');
+        // STEP C: Upload & Trigger Notification
+        setLoadingMessage("Guardando resultados y notificando a Dirección...");
+        const payload = {
+            targetFolderId: updated.driveFolderId,
+            notificationType: 'RIESGO_UPLOAD', // TRIGGER FOR SECOND EMAIL
+            datosCliente: {
+                id: updated.id,
+                clientName: updated.clientName, 
+                nit: updated.nit,
+                estado: 'PENDIENTE_DIRECTOR' // Email says "Ready for Director"
+            },
+            archivos: cleanFilesToUpload
+            // Note: In a real app we'd also send the 'aiResult' JSON to store in a DB/Sheet column here
+        };
 
-      } catch (e: any) {
-        alert("Error ejecutando IA: " + e.message);
-        console.error(e);
-      } finally {
-        setLoadingAI(false);
-      }
-    } else {
+        await saveAnalysisToCloud(payload);
+
+        // Update Local State
+        setAnalyses(prev => prev.map(a => a.id === updated.id ? analyzedAnalysis : a));
+        setSelectedAnalysis(analyzedAnalysis);
+        setSuccessType('CARTERA_UPDATED');
+        setView('SUCCESS');
+
+    } catch (error: any) {
+        alert("Error en proceso Cartera: " + error.message);
+    } finally {
+        setGlobalLoading(false);
+    }
+  };
+
+  // 3. Director Flow: Just Open (AI is already done)
+  const handleDirectorOpen = async (analysis: CreditAnalysis) => {
+      // Just set view, AI is pre-calculated in Cartera step or persisted
       setSelectedAnalysis(analysis);
       setView('DETAIL');
-    }
   };
 
   const handleFinalDecision = async (id: string, action: 'APROBADO' | 'NEGADO', manualCupo?: number, manualPlazo?: number, reason?: string) => {
     // 1. UPDATE LOCAL STATE
-    setAnalyses(prev => prev.map(a => {
+    const updatedAnalyses = analyses.map(a => {
       if (a.id !== id) return a;
       
       const updated: CreditAnalysis = { 
         ...a, 
         status: action, 
         assignedCupo: manualCupo,
-        assignedPlazo: manualPlazo, // Store the deadline
+        assignedPlazo: manualPlazo, 
         rejectionReason: reason 
       };
 
-      // Also update the nested cupo object for display consistency
       if (updated.cupo && manualPlazo) {
         updated.cupo = { ...updated.cupo, plazoRecomendado: manualPlazo };
       }
 
       return updated;
-    }));
+    });
+
+    setAnalyses(updatedAnalyses);
+
+    // Update selectedAnalysis so the DetailView re-renders with the new state immediately
+    const updatedSelected = updatedAnalyses.find(a => a.id === id);
+    if (updatedSelected) {
+        setSelectedAnalysis(updatedSelected);
+    }
 
     // 2. IMMEDIATE SHEET UPDATE (Fire & Forget / Async)
-    const analysis = analyses.find(a => a.id === id);
+    const analysis = updatedAnalyses.find(a => a.id === id);
     if (analysis) {
        let detalleLog = "";
        if (action === 'APROBADO') {
@@ -275,8 +253,8 @@ const App: React.FC = () => {
          }
        }).catch(err => console.error("Failed to update sheet immediately:", err));
     }
-
-    setView('LIST');
+    
+    // REMOVED: setView('LIST'); -> We want to stay in DETAIL view
   };
 
   if (!role) {
@@ -288,31 +266,12 @@ const App: React.FC = () => {
     );
   }
 
-  // Filter Logic:
-  // Comercial: Sees all.
-  // Director: Sees all.
-  // Cartera: Now sees ALL too, but UI splits them into "Tasks" vs "History".
   const visibleAnalyses = analyses;
 
   return (
     <Layout role={role} onReset={() => { setRole(null); setView('LIST'); }}>
       
-      {/* GLOBAL LOADING OVERLAYS */}
-      {loadingAI && (
-        <div className="fixed inset-0 bg-slate-900/80 z-[200] flex flex-col items-center justify-center text-white">
-          <div className="w-16 h-16 border-4 border-equitel-red border-t-transparent rounded-full animate-spin mb-4"></div>
-          <h2 className="text-2xl font-black uppercase tracking-widest">Ejecutando Análisis One-Shot</h2>
-          <p className="text-slate-400 mt-2">Cruzando variables financieras y de riesgo...</p>
-        </div>
-      )}
-
-      {uploading && (
-        <div className="fixed inset-0 bg-slate-900/90 z-[200] flex flex-col items-center justify-center text-white">
-          <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-          <h2 className="text-2xl font-black uppercase tracking-widest">Sincronizando con la Nube</h2>
-          <p className="text-blue-300 mt-2">Conectando con Google Drive & Gmail</p>
-        </div>
-      )}
+      <LoadingOverlay visible={globalLoading} message={loadingMessage} />
 
       {view === 'LIST' && (
         <>
@@ -333,7 +292,7 @@ const App: React.FC = () => {
                   </div>
                 </div>
 
-                {/* 1. TAREAS PENDIENTES (Solo Pendiente Cartera) */}
+                {/* 1. TAREAS PENDIENTES */}
                 <div className="space-y-4">
                   <h3 className="font-bold text-slate-400 uppercase text-xs tracking-widest flex items-center gap-2">
                      <AlertCircle size={16} className="text-amber-500" />
@@ -367,7 +326,7 @@ const App: React.FC = () => {
                   )}
                 </div>
 
-                {/* 2. HISTORIAL COMPLETO (Para ver resultados, cartas, etc) */}
+                {/* 2. HISTORIAL COMPLETO */}
                 <div className="space-y-4 pt-4 border-t border-slate-200">
                   <h3 className="font-bold text-slate-400 uppercase text-xs tracking-widest flex items-center gap-2">
                      <Clock size={16} />

@@ -22,8 +22,10 @@ const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
   // Local state for the input field to avoid excessive re-renders on App
   const [localEmails, setLocalEmails] = useState(notificationEmails);
 
-  const pending = analyses.filter(a => a.status === 'PENDIENTE_DIRECTOR');
-  const history = analyses.filter(a => a.status !== 'PENDIENTE_DIRECTOR' && a.status !== 'PENDIENTE_CARTERA');
+  // UPDATED FILTER: Include 'ANALIZADO' as it is waiting for Director decision
+  const pending = analyses.filter(a => a.status === 'PENDIENTE_DIRECTOR' || a.status === 'ANALIZADO');
+  
+  const history = analyses.filter(a => a.status !== 'PENDIENTE_DIRECTOR' && a.status !== 'ANALIZADO' && a.status !== 'PENDIENTE_CARTERA');
 
   const handleSaveSettings = () => {
     if (onUpdateEmails) {
@@ -76,7 +78,7 @@ const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
         <div className="p-6 border-b bg-amber-50/50 flex items-center justify-between">
           <h3 className="font-bold text-amber-900 uppercase text-sm tracking-widest flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-            Pendientes de Decisión (Documentación Completa)
+            Pendientes de Decisión (Documentación Completa y Análisis Finalizado)
           </h3>
         </div>
 
@@ -94,20 +96,24 @@ const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
               {pending.map(a => (
                 <tr key={a.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => onSelect(a)}>
                   <td className="px-6 py-4">
+                    {/* UPDATED: Show ID explicitly */}
+                    <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 text-[9px] font-black mb-1">
+                      {a.id}
+                    </span>
                     <p className="font-bold text-slate-800">{a.clientName}</p>
                     <p className="text-xs text-slate-400">{a.nit}</p>
                   </td>
                   <td className="px-6 py-4 text-sm text-slate-600">
-                    {a.comercial.name}
+                    {a.comercial?.name || "Sin Asesor"}
                   </td>
                   <td className="px-6 py-4">
                     <span className="px-2 py-1 bg-amber-100 text-amber-700 rounded-full text-[9px] font-black uppercase">
-                      LISTO PARA IA
+                      LISTO PARA DECISIÓN
                     </span>
                   </td>
                   <td className="px-6 py-4 text-center">
                     <button className="px-4 py-2 bg-slate-900 text-white text-[10px] font-bold uppercase rounded-lg group-hover:bg-equitel-red transition-colors">
-                      Ejecutar Análisis
+                      Revisar
                     </button>
                   </td>
                 </tr>
@@ -132,7 +138,10 @@ const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
             <tbody className="divide-y divide-slate-100">
               {history.map(a => (
                 <tr key={a.id} className="hover:bg-slate-50" onClick={() => onSelect(a)}>
-                  <td className="px-6 py-4 text-sm font-medium text-slate-600">{a.clientName}</td>
+                  <td className="px-6 py-4 text-sm font-medium text-slate-600">
+                    <span className="block text-[9px] font-black text-slate-400">{a.id}</span>
+                    {a.clientName}
+                  </td>
                   <td className="px-6 py-4 text-sm text-slate-400">{a.date}</td>
                   <td className="px-6 py-4 text-right">
                     <StatusBadge status={a.status} />

@@ -1,11 +1,11 @@
 
 import React, { useState } from 'react';
-import { CreditAnalysis, CommercialMember, ValidationResult } from '../types';
+import { CreditAnalysis, CommercialMember, DocumentValidation } from '../types';
 import { INTEGRANTES_COMERCIALES } from '../constants';
 import { 
-  Upload, Loader2, Send, AlertCircle, CheckCircle, Sparkles, XCircle, Search, CloudUpload, ShieldAlert
+  Upload, Loader2, Send, AlertCircle, CheckCircle, Sparkles, XCircle, Search, CloudUpload, ShieldAlert, Lock, FileText
 } from 'lucide-react';
-import { extractIdentityFromRUT, validateCommercialDocuments } from '../services/gemini';
+import { extractIdentityFromRUT, validateSingleDocument } from '../services/gemini';
 import PINModal from './PINModal';
 
 interface NewAnalysisFlowProps {
@@ -14,8 +14,6 @@ interface NewAnalysisFlowProps {
 }
 
 const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel }) => {
-  const [validating, setValidating] = useState(false);
-  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [extractingId, setExtractingId] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -27,6 +25,7 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
     integrante: null as CommercialMember | null
   });
 
+  // Individual file states
   const [files, setFiles] = useState<{ [key: string]: File | null }>({
     estadosFinancieros: null,
     camara: null,
@@ -39,13 +38,29 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
     composicion: null
   });
 
+  // Validation states per file
+  const [fileValidation, setFileValidation] = useState<{ [key: string]: { checking: boolean, valid: boolean | null, msg?: string } }>({});
+
+  // Computed state to lock UI
+  const isLocked = Object.values(fileValidation).some(v => v.checking) || extractingId || uploading;
+
+  const isBasicInfoValid = !!(form.razonSocial && form.nit && form.integrante);
+
   const isFormValid = React.useMemo(() => {
-    const requiredFiles = { ...files };
-    // @ts-ignore
-    delete requiredFiles.extractos; 
-    const areRequiredFilesUploaded = Object.values(requiredFiles).every(f => f !== null);
-    return !!(form.razonSocial && form.nit && form.integrante && areRequiredFilesUploaded);
-  }, [form, files]);
+    // Basic form check
+    if (!isBasicInfoValid) return false;
+    
+    // Check required files presence
+    const requiredKeys = ['estadosFinancieros', 'camara', 'referenciaComercial', 'certificacionBancaria', 'rut', 'cedulaRL', 'composicion'];
+    const allFilesUploaded = requiredKeys.every(k => files[k] !== null);
+    if (!allFilesUploaded) return false;
+
+    // Check if any validation failed (only if it has been checked and is invalid)
+    const anyValidationFailed = Object.values(fileValidation).some(v => v.valid === false);
+    if (anyValidationFailed) return false;
+
+    return true;
+  }, [form, files, fileValidation, isBasicInfoValid]);
 
   const handleRutSelect = async (file: File | undefined) => {
     if (!file) return;
@@ -60,43 +75,88 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
           nit: data.nit || prev.nit
         }));
       }
+      
+      // Perform standard validation check for RUT type too
+      setFileValidation(prev => ({ ...prev, rut: { checking: true, valid: null } }));
+      const val = await validateSingleDocument(file, 'RUT');
+      setFileValidation(prev => ({ ...prev, rut: { checking: false, valid: val.isValid, msg: val.msg } }));
+
     } catch (error) {
       console.error("Error extracting identity from RUT", error);
+      setFileValidation(prev => ({ ...prev, rut: { checking: false, valid: false, msg: "Error lectura RUT" } }));
     } finally {
       setExtractingId(false);
     }
   };
 
-  // STEP 1: VALIDATE DOCUMENTS WITH AI
-  const handleValidate = async () => {
-    if (!isFormValid) return;
-    setValidating(true);
-    setValidationResult(null);
-    setErrorMsg(null);
+  const handleFileSelect = async (key: string, file: File | undefined) => {
+    if (!file) return;
+    setFiles(prev => ({ ...prev, [key]: file }));
+
+    // START VALIDATION FOR THIS FILE
+    setFileValidation(prev => ({ ...prev, [key]: { checking: true, valid: null } }));
 
     try {
-      const filesToValidate = Object.entries(files)
-        .filter(([_, f]) => f !== null)
-        .map(([_, f]) => f as File);
+        // Map UI key to expected Type
+        let expectedType: any = 'OTRO';
+        if (key === 'camara') expectedType = 'CAMARA';
+        else if (key === 'certificacionBancaria') expectedType = 'BANCARIA';
+        else if (key === 'referenciaComercial') expectedType = 'REFERENCIA';
+        else if (key === 'estadosFinancieros') expectedType = 'FINANCIEROS';
+        else if (key === 'declaracionRenta') expectedType = 'RENTA';
+        else if (key === 'cedulaRL') expectedType = 'CEDULA';
+        else if (key === 'composicion') expectedType = 'COMPOSICION';
 
-      const result = await validateCommercialDocuments(filesToValidate, form.razonSocial, form.nit);
-      setValidationResult(result);
+        // Call Optimized Single Document Validator
+        const result = await validateSingleDocument(file, expectedType);
+        
+        setFileValidation(prev => ({ 
+            ...prev, 
+            [key]: { checking: false, valid: result.isValid, msg: result.msg } 
+        }));
 
-      if (!result.overallValid) {
-        setErrorMsg("Se encontraron inconsistencias en la documentación. Revise el reporte abajo.");
-      }
-    } catch (error: any) {
-      setErrorMsg("Error en la validación: " + error.message);
-    } finally {
-      setValidating(false);
+    } catch (e) {
+        setFileValidation(prev => ({ 
+            ...prev, 
+            [key]: { checking: false, valid: false, msg: "Error al validar" } 
+        }));
     }
   };
 
-  // STEP 2: UPLOAD TO CLOUD (Only enabled if Validated or Overridden)
   const handleUpload = async () => {
+    if (!isBasicInfoValid) {
+        setErrorMsg("Por favor complete la información del cliente y seleccione un asesor.");
+        return;
+    }
+
     setUploading(true);
+
+    // Build Validation Results Payload for Email
+    const results: DocumentValidation[] = [];
+    const names: Record<string, string> = {
+        estadosFinancieros: 'Estados Financieros',
+        camara: 'Cámara de Comercio',
+        referenciaComercial: 'Referencia Comercial',
+        certificacionBancaria: 'Certificación Bancaria',
+        rut: 'RUT',
+        declaracionRenta: 'Declaración de Renta',
+        extractos: 'Extractos Bancarios', 
+        cedulaRL: 'Cédula Rep. Legal',
+        composicion: 'Composición Accionaria'
+    };
+
+    Object.entries(files).forEach(([key, file]) => {
+        if (!file) return;
+        const val = fileValidation[key];
+        const isValid = val?.valid === true; 
+        
+        results.push({
+            fileName: names[key] || file.name,
+            isValid: isValid,
+            issue: val?.msg
+        });
+    });
     
-    // We create the object with a TEMP ID. The server will assign the real SOL-XXXXXX
     const newAnalysis: CreditAnalysis = {
       id: `SOL-PENDING`, 
       clientName: form.razonSocial,
@@ -106,7 +166,11 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
       status: 'PENDIENTE_CARTERA',
       commercialFiles: files,
       riskFiles: { datacredito: null, informa: null },
-      validationResult: validationResult || undefined
+      validationResult: {
+          overallValid: results.every(r => r.isValid),
+          results: results,
+          summary: showOverridePin ? "Carga autorizada con excepción de Director." : "Validación estándar exitosa."
+      }
     };
 
     try {
@@ -119,8 +183,14 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
   };
 
   return (
-    <div className="max-w-4xl mx-auto bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-      {/* Header with Equitel Black/Red Theme */}
+    <div className="max-w-4xl mx-auto bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100 pb-8 relative">
+      
+      {/* Visual Overlay when Locked */}
+      {isLocked && (
+        <div className="absolute inset-0 bg-white/50 z-50 cursor-not-allowed"></div>
+      )}
+
+      {/* Header */}
       <div className="bg-black p-8 text-white flex justify-between items-center relative overflow-hidden">
         <div className="absolute top-0 right-0 w-32 h-32 bg-equitel-red opacity-20 rounded-full blur-3xl -mr-10 -mt-10"></div>
         <div className="relative z-10">
@@ -148,6 +218,8 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
                 label="Cargar RUT (Autofill)" 
                 file={files.rut} 
                 onSelect={handleRutSelect} 
+                validation={fileValidation.rut}
+                disabled={isLocked}
                 icon={<Sparkles className="text-amber-500 mb-1" size={24} />}
               />
             </div>
@@ -160,7 +232,8 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
                 required
                 value={form.razonSocial}
                 onChange={e => setForm({...form, razonSocial: e.target.value.toUpperCase()})}
-                readOnly={extractingId}
+                readOnly={extractingId || isLocked}
+                disabled={isLocked}
               />
               {extractingId && <div className="absolute right-4 top-9"><Loader2 className="animate-spin text-equitel-red" /></div>}
             </div>
@@ -172,7 +245,8 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
                 required
                 value={form.nit}
                 onChange={e => setForm({...form, nit: e.target.value})}
-                readOnly={extractingId}
+                readOnly={extractingId || isLocked}
+                disabled={isLocked}
               />
             </div>
         </div>
@@ -184,6 +258,7 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
             required
             onChange={e => setForm({...form, integrante: INTEGRANTES_COMERCIALES.find(i => i.email === e.target.value) || null})}
             value={form.integrante?.email || ""}
+            disabled={isLocked}
           >
             <option value="" className="text-slate-400">Seleccionar Integrante Comercial</option>
             {INTEGRANTES_COMERCIALES.map(i => <option key={i.email} value={i.email} className="text-slate-900">{i.name}</option>)}
@@ -196,96 +271,47 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
             <CloudUpload size={14}/> 
             2. Documentación Financiera y Legal
           </h3>
-          <div className="grid grid-cols-4 gap-4">
-            <FileDrop id="ef" label="EE.FF Auditados" file={files.estadosFinancieros} onSelect={f => setFiles({...files, estadosFinancieros: f})} />
-            <FileDrop id="cc" label="Cámara Comercio" file={files.camara} onSelect={f => setFiles({...files, camara: f})} />
-            <FileDrop id="ref" label="Ref. Comercial" file={files.referenciaComercial} onSelect={f => setFiles({...files, referenciaComercial: f})} />
-            <FileDrop id="cb" label="Cert. Bancaria" file={files.certificacionBancaria} onSelect={f => setFiles({...files, certificacionBancaria: f})} />
-            <FileDrop id="renta" label="Decl. Renta" file={files.declaracionRenta} onSelect={f => setFiles({...files, declaracionRenta: f})} />
-            <FileDrop id="cedula" label="Cédula RL" file={files.cedulaRL} onSelect={f => setFiles({...files, cedulaRL: f})} />
-            <FileDrop id="comp" label="Comp. Accionaria" file={files.composicion} onSelect={f => setFiles({...files, composicion: f})} />
-            <FileDrop id="ext" label="Extractos (Opcional)" file={files.extractos} onSelect={f => setFiles({...files, extractos: f})} optional={true} />
+          <div className="grid grid-cols-4 gap-4 relative">
+            <FileDrop id="ef" label="EE.FF Auditados" file={files.estadosFinancieros} onSelect={f => handleFileSelect('estadosFinancieros', f)} validation={fileValidation.estadosFinancieros} disabled={isLocked} />
+            <FileDrop id="cc" label="Cámara Comercio" file={files.camara} onSelect={f => handleFileSelect('camara', f)} validation={fileValidation.camara} disabled={isLocked} />
+            <FileDrop id="ref" label="Ref. Comercial" file={files.referenciaComercial} onSelect={f => handleFileSelect('referenciaComercial', f)} validation={fileValidation.referenciaComercial} disabled={isLocked} />
+            <FileDrop id="cb" label="Cert. Bancaria" file={files.certificacionBancaria} onSelect={f => handleFileSelect('certificacionBancaria', f)} validation={fileValidation.certificacionBancaria} disabled={isLocked} />
+            <FileDrop id="renta" label="Decl. Renta" file={files.declaracionRenta} onSelect={f => handleFileSelect('declaracionRenta', f)} validation={fileValidation.declaracionRenta} disabled={isLocked} />
+            <FileDrop id="cedula" label="Cédula RL" file={files.cedulaRL} onSelect={f => handleFileSelect('cedulaRL', f)} validation={fileValidation.cedulaRL} disabled={isLocked} />
+            <FileDrop id="comp" label="Comp. Accionaria" file={files.composicion} onSelect={f => handleFileSelect('composicion', f)} validation={fileValidation.composicion} disabled={isLocked} />
+            <FileDrop id="ext" label="Extractos (Opcional)" file={files.extractos} onSelect={f => handleFileSelect('extractos', f)} optional={true} validation={fileValidation.extractos} disabled={isLocked} />
           </div>
         </div>
 
-        {/* Validation Results Display */}
-        {validationResult && (
-          <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 animate-in fade-in">
-            <h3 className="font-bold text-slate-900 uppercase text-xs mb-4 flex items-center gap-2">
-              <Sparkles size={16} className="text-indigo-500" />
-              Resultado de Validación Estefanía IA
-            </h3>
-            <div className="space-y-3">
-              {validationResult.results.map((res, idx) => (
-                 <div key={idx} className={`p-3 rounded-xl border flex items-center justify-between text-xs ${res.isValid ? 'bg-white border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
-                    <div className="flex items-center gap-2">
-                       {res.isValid ? <CheckCircle size={16} /> : <XCircle size={16} />}
-                       <span className="font-bold truncate max-w-[200px]">{res.fileName}</span>
-                    </div>
-                    <div className="text-right">
-                       <p className="font-bold">{res.issue || 'Documento Válido'}</p>
-                       {res.detectedDate && <p className="text-[10px] opacity-70">Fecha: {res.detectedDate}</p>}
-                    </div>
-                 </div>
-              ))}
-            </div>
-            <p className="mt-4 text-[10px] text-slate-400 italic text-center">{validationResult.summary}</p>
-          </div>
-        )}
-
         {/* Actions */}
-        <div className="flex gap-4 pt-4 border-t">
-          {/* STEP 1 Button: Validate */}
-          {!validationResult?.overallValid ? (
-             <div className="flex gap-2 w-full">
-               <button 
-                 type="button"
-                 onClick={handleValidate}
-                 disabled={validating || !isFormValid}
-                 className="flex-1 py-5 bg-black text-white rounded-2xl font-black hover:bg-slate-800 disabled:bg-slate-200 transition-all uppercase text-xs flex items-center justify-center gap-2 tracking-widest shadow-lg"
-               >
-                 {validating ? <Loader2 className="animate-spin" /> : <Search size={18} />}
-                 <span>Validar Documentación (IA)</span>
-               </button>
-               
-               {/* OVERRIDE BUTTON (Only appears after failed validation) */}
-               {validationResult && !validationResult.overallValid && (
-                  <button 
-                    type="button"
-                    onClick={() => setShowOverridePin(true)}
-                    className="px-6 py-5 bg-red-100 text-red-600 rounded-2xl font-black hover:bg-red-200 transition-all uppercase text-xs flex items-center justify-center gap-2"
-                  >
-                    <ShieldAlert size={18} />
-                    <span>Autorizar Excepción</span>
-                  </button>
-               )}
-             </div>
-          ) : (
-            /* STEP 2 Button: Upload (Only if Valid) */
+        <div className="pt-8 border-t flex flex-col gap-4">
              <button 
                type="button"
                onClick={handleUpload}
-               disabled={uploading}
-               className="flex-1 py-5 bg-equitel-red text-white rounded-2xl font-black hover:bg-red-700 disabled:bg-slate-200 transition-all uppercase text-xs flex items-center justify-center gap-2 shadow-xl shadow-red-100 tracking-widest"
+               disabled={uploading || !isBasicInfoValid || isLocked || (!isFormValid && !showOverridePin)} 
+               className="w-full py-5 bg-equitel-red text-white rounded-2xl font-black hover:bg-red-700 disabled:bg-slate-200 disabled:text-slate-400 transition-all uppercase text-xs flex items-center justify-center gap-2 shadow-xl shadow-red-100 tracking-widest z-10"
              >
-               {uploading ? <Loader2 className="animate-spin" /> : <CloudUpload size={18} />}
-               <span>Confirmar y Enviar a Drive</span>
+               {uploading ? <Loader2 className="animate-spin" /> : <Send size={18} />}
+               <span>{showOverridePin ? "Finalizar con Excepción (Director)" : "Finalizar y Enviar a Cartera"}</span>
              </button>
-          )}
+             
+             {/* Subtle PIN Link */}
+             {!isFormValid && isBasicInfoValid && !showOverridePin && !isLocked && (
+               <button 
+                 onClick={() => setShowOverridePin(true)}
+                 className="mx-auto text-[10px] text-slate-300 hover:text-slate-500 underline decoration-slate-300 underline-offset-4 transition-colors font-medium flex items-center gap-1 z-10"
+               >
+                 <Lock size={10} /> Autorizar excepción de Director
+               </button>
+             )}
         </div>
-
-        {validationResult?.overallValid && (
-           <p className="text-center text-xs text-green-600 font-bold animate-pulse">
-             ✓ Documentación validada correctamente. Puede proceder a la carga.
-           </p>
-        )}
       </div>
 
       {showOverridePin && (
         <PINModal 
           onSuccess={() => {
-            setShowOverridePin(false);
-            handleUpload(); // Force upload immediately after PIN success
+            setShowOverridePin(false); // Validated pin, but we keep state to allow upload
+            handleUpload(); 
           }} 
           onCancel={() => setShowOverridePin(false)} 
         />
@@ -294,41 +320,72 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
   );
 };
 
-// IMPROVED FileDrop: Use the Label as the main container for easier clicking
-const FileDrop = ({ label, file, onSelect, icon, optional = false }: any) => (
-  <label 
-    htmlFor={label}
-    className={`
-      border-2 border-dashed p-4 rounded-2xl text-center cursor-pointer transition-all hover:bg-slate-50 relative overflow-hidden group h-28 flex flex-col items-center justify-center
-      ${file ? 'border-green-500 bg-green-50' : 'border-slate-200 bg-white'} 
-      ${!file && optional ? 'opacity-70' : ''}
-    `}
-  >
-    <input 
-      type="file" 
-      className="hidden" 
-      id={label} 
-      accept=".pdf,.png,.jpg,.jpeg" 
-      onChange={e => onSelect(e.target.files?.[0])} 
-    />
-    
-    {file ? (
-      <>
-        <CheckCircle className="text-green-500 mb-2" size={24} />
-        <span className="text-[9px] font-black uppercase text-green-700 truncate w-full px-2">
-          {file.name}
-        </span>
-      </>
-    ) : (
-      <>
-        {icon || <Upload className="text-slate-300 group-hover:text-equitel-red group-hover:scale-110 transition-all mb-2" size={24} />}
-        <span className="text-[9px] font-black uppercase text-slate-500 group-hover:text-slate-700">
-          {label}
-        </span>
-        {optional && <span className="text-[8px] text-slate-400 mt-1">(Opcional)</span>}
-      </>
-    )}
-  </label>
-);
+// IMPROVED FileDrop with Status Indicators & Locking
+const FileDrop = ({ label, file, onSelect, icon, optional = false, validation, disabled }: any) => {
+  const isInvalid = validation?.valid === false;
+  const isValid = validation?.valid === true;
+  const isChecking = validation?.checking === true;
+
+  const handleClick = (e: React.MouseEvent) => {
+    if (disabled || isChecking) {
+      e.preventDefault();
+    }
+  };
+
+  return (
+    <label 
+      htmlFor={label}
+      onClick={handleClick}
+      className={`
+        border-2 border-dashed p-4 rounded-2xl text-center cursor-pointer transition-all relative overflow-hidden group h-36 flex flex-col items-center justify-center
+        ${isInvalid ? 'border-red-400 bg-red-50' : isValid ? 'border-green-500 bg-green-50' : file ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white'} 
+        ${!file && optional ? 'opacity-70' : ''}
+        ${disabled ? 'opacity-50 cursor-not-allowed grayscale' : 'hover:bg-slate-50'}
+      `}
+    >
+      <input 
+        type="file" 
+        className="hidden" 
+        id={label} 
+        disabled={disabled || isChecking}
+        accept=".pdf,.png,.jpg,.jpeg" 
+        onChange={e => onSelect(e.target.files?.[0])} 
+      />
+      
+      {isChecking ? (
+         <div className="flex flex-col items-center gap-2 text-slate-500 absolute inset-0 bg-white/90 justify-center z-20 p-2">
+           <Loader2 className="animate-spin text-equitel-red" size={24} />
+           <span className="text-[8px] font-bold uppercase animate-pulse">Verificando...</span>
+           <p className="text-[7px] text-slate-400 leading-tight">Podría tardar varios segundos, no recargues la página</p>
+         </div>
+      ) : file ? (
+        <>
+          {isInvalid ? <XCircle className="text-red-500 mb-2" size={24} /> : 
+           isValid ? <CheckCircle className="text-green-500 mb-2" size={24} /> :
+           <FileText className="text-blue-500 mb-2" size={24} />
+          }
+          
+          <span className={`text-[9px] font-black uppercase truncate w-full px-2 ${isInvalid ? 'text-red-700' : 'text-slate-700'}`}>
+            {file.name}
+          </span>
+          
+          {validation?.msg && (
+             <span className="text-[8px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded mt-1 animate-pulse leading-tight">
+               {validation.msg}
+             </span>
+          )}
+        </>
+      ) : (
+        <>
+          {icon || <Upload className="text-slate-300 group-hover:text-equitel-red group-hover:scale-110 transition-all mb-2" size={24} />}
+          <span className="text-[9px] font-black uppercase text-slate-500 group-hover:text-slate-700">
+            {label}
+          </span>
+          {optional && <span className="text-[8px] text-slate-400 mt-1">(Opcional)</span>}
+        </>
+      )}
+    </label>
+  );
+};
 
 export default NewAnalysisFlow;

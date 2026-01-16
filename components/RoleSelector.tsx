@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { UserRole } from '../types';
 import { Users, Briefcase, FileText } from 'lucide-react';
 
@@ -10,19 +10,24 @@ interface RoleSelectorProps {
 const LogoSVG = ({ className = "w-full h-full", color = "black" }: { className?: string, color?: string }) => (
   <svg className={className} viewBox="0 0 200 60" fill="none" xmlns="http://www.w3.org/2000/svg">
     <circle cx="30" cy="30" r="25" stroke={color} strokeWidth="4" fill="none"/>
-    <path 
-      d="M 42 20 L 27 20 Q 20 20 20 27 L 20 33 Q 20 40 27 40 L 42 40" 
-      stroke="#DA291C" 
-      strokeWidth="5" 
-      strokeLinecap="butt" 
-      fill="none"
-    />
-    <path 
-      d="M 27 30 L 38 30" 
-      stroke="#DA291C" 
-      strokeWidth="5" 
-      strokeLinecap="butt"
-    />
+    
+    {/* Rotated E Group */}
+    <g transform="rotate(-30 30 30)">
+      <path 
+        d="M 42 20 L 27 20 Q 20 20 20 27 L 20 33 Q 20 40 27 40 L 42 40" 
+        stroke="#DA291C" 
+        strokeWidth="5" 
+        strokeLinecap="butt" 
+        fill="none"
+      />
+      <path 
+        d="M 27 30 L 42 30" 
+        stroke="#DA291C" 
+        strokeWidth="5" 
+        strokeLinecap="butt"
+      />
+    </g>
+    
     <text x="65" y="38" fill={color} fontFamily="Inter, sans-serif" fontWeight="900" fontSize="24" letterSpacing="0.1em">EQUITEL</text>
   </svg>
 );

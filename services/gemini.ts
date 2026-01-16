@@ -39,14 +39,19 @@ export const extractIdentityFromRUT = async (rutFile: File) => {
   
   if (!filePart) throw new Error("No se pudo procesar el archivo RUT");
 
+  // Prompt optimizado para excluir DV
   const prompt = `Analiza este documento (RUT DIAN Colombia) y extrae:
   1. Razón Social Exacta (Nombre de la empresa).
-  2. NIT (Número de Identificación Tributaria) sin el dígito de verificación si es posible, o completo.
+  2. NIT (Número de Identificación Tributaria).
+     - Busca la Casilla 5 (Número de Identificación).
+     - IGNORA y ELIMINA el Dígito de Verificación (DV) que suele estar en la Casilla 6 o separado por un guion al final.
+     - Retorna SOLO el número base sin puntos ni guiones.
+     - Ejemplo: Si ves "890.900.123-4" o "890900123 DV 4", devuelve "890900123".
   
   Retorna JSON.`;
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-2.5-flash',
     contents: [{ parts: [filePart, { text: prompt }] }],
     config: {
       temperature: 0,
@@ -71,280 +76,179 @@ export const extractIdentityFromRUT = async (rutFile: File) => {
   }
 };
 
-/**
- * Validates commercial documents using strict OCR and rule checking.
- */
-export const validateCommercialDocuments = async (files: File[], clientName: string, nit: string): Promise<ValidationResult> => {
+export const validateDocIdentity = async (file: File, expectedClientName: string): Promise<{ isValid: boolean; reason?: string }> => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) throw new Error("API Key not found");
   
   const ai = new GoogleGenAI({ apiKey });
+  const filePart = await fileToPart(file);
+  if (!filePart) return { isValid: false, reason: "Error de lectura de archivo" };
+
+  const prompt = `Analiza el encabezado o los datos principales de este documento.
+  El cliente esperado es: "${expectedClientName}".
   
-  const partsPromises = files.map(f => fileToPart(f));
-  const partsResults = await Promise.all(partsPromises);
-  const parts: any[] = partsResults.filter(p => p !== null);
-  
-  const prompt = `Actúa como un Auditor de Riesgo y Analista Financiero Senior (Estefanía 2.0).
-  Tu tarea es doble: 
-  1. Validar el cumplimiento estricto de requisitos documentales (fechas, firmas, vigencias).
-  2. Extraer información financiera para el cálculo de cupo.
-  
-  Cliente: ${clientName}
-  NIT: ${nit}
+  Tu tarea:
+  1. Identificar el nombre de la empresa o persona a quien pertenece este documento.
+  2. Comparar con el cliente esperado (ignorando diferencias menores como SAS, LTDA, mayúsculas/minúsculas).
+  3. Determinar si COINCIDE o NO.
 
-  Analiza los documentos adjuntos (PDFs/Imágenes) y extrae la siguiente información estructurada.
-
-  **REGLAS DE EXTRACCIÓN DOCUMENTAL (CRÍTICO):**
-  - **Estados Financieros:** Identifica qué años fiscales completos están presentes. Si hay estados financieros con corte menor a diciembre del año actual, márcalo como 'parcial'.
-  - **Certificados (Cámara Comercio, Ref. Comercial, Cert. Bancaria):** Extrae la FECHA DE EMISIÓN o EXPEDICIÓN de cada uno. Formato YYYY-MM-DD.
-  - **Legales:** Verifica visualmente si existe el RUT, cuántas Declaraciones de Renta (años) hay, cuántos meses de Extractos Bancarios consecutivos hay.
-  - **Identificación RL:** Verifica si existe el documento de identidad del Representante Legal. **IMPORTANTE:** Puede ser "Cédula de Ciudadanía" (Colombia) O "Cédula de Extranjería". Ambas son válidas.
-  - **Composición Accionaria:** Verifica si el documento de composición accionaria tiene DOS firmas específicas: Revisor Fiscal Y Representante Legal.
-
-  **REGLAS DE EXTRACCIÓN FINANCIERA:**
-  - Usa el año más reciente disponible para los indicadores.
-  - Extrae: Activos (Corriente, Total, Inventarios, Efectivo), Pasivos (Corriente, Total), Patrimonio, Ingresos, Utilidad Neta, EBIT, EBITDA (calcúlalo si falta), Gastos Financieros, Impuestos.
-  - Datacrédito/Informa: Extrae cupos sugeridos, OtorgA y comportamiento.
-
-  Retorna SOLAMENTE un JSON válido.`;
+  Retorna JSON.`;
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
-    contents: [{ parts: [...parts, { text: prompt }] }],
+    model: 'gemini-2.5-flash',
+    contents: [{ parts: [filePart, { text: prompt }] }],
     config: {
       temperature: 0,
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          identificacion: {
-            type: Type.OBJECT,
-            properties: {
-              razonSocial: { type: Type.STRING },
-              nit: { type: Type.STRING }
-            }
-          },
-          validacionDocumental: {
-            type: Type.OBJECT,
-            properties: {
-              financieros: {
-                type: Type.OBJECT,
-                properties: {
-                  aniosEncontrados: { type: Type.ARRAY, items: { type: Type.INTEGER } },
-                  esParcial: { type: Type.BOOLEAN }
-                }
-              },
-              fechasVigencia: {
-                type: Type.OBJECT,
-                properties: {
-                  camara: { type: Type.STRING, description: "YYYY-MM-DD o null" },
-                  referencia: { type: Type.STRING, description: "YYYY-MM-DD o null" },
-                  bancaria: { type: Type.STRING, description: "YYYY-MM-DD o null" }
-                }
-              },
-              legales: {
-                type: Type.OBJECT,
-                properties: {
-                  rut: { type: Type.BOOLEAN },
-                  declaracionRentaAnios: { type: Type.ARRAY, items: { type: Type.INTEGER } },
-                  extractosMesesCount: { type: Type.INTEGER },
-                  cedulaRL: { type: Type.BOOLEAN, description: "True si hay Cédula Ciudadanía o Extranjería" }
-                }
-              },
-              accionaria: {
-                type: Type.OBJECT,
-                properties: {
-                  firmaRevisor: { type: Type.BOOLEAN },
-                  firmaRepresentante: { type: Type.BOOLEAN }
-                }
-              }
-            }
-          },
-          fuentesExternas: {
-            type: Type.OBJECT,
-            properties: {
-              datacredito: {
-                type: Type.OBJECT,
-                properties: {
-                  otorgaCupo: { type: Type.NUMBER },
-                  historicoCupos: { type: Type.ARRAY, items: { type: Type.NUMBER } }
-                }
-              },
-              informa: {
-                type: Type.OBJECT,
-                properties: {
-                  opinionCredito: { type: Type.NUMBER }
-                }
-              },
-              referencias: {
-                type: Type.OBJECT,
-                properties: {
-                  valores: { type: Type.ARRAY, items: { type: Type.NUMBER } }
-                }
-              }
-            }
-          },
-          financiero: {
-            type: Type.OBJECT,
-            properties: {
-              activos: {
-                type: Type.OBJECT,
-                properties: {
-                  corriente: { type: Type.NUMBER },
-                  total: { type: Type.NUMBER },
-                  efectivo: { type: Type.NUMBER },
-                  inventarios: { type: Type.NUMBER }
-                }
-              },
-              pasivos: {
-                type: Type.OBJECT,
-                properties: {
-                  corriente: { type: Type.NUMBER },
-                  total: { type: Type.NUMBER },
-                  noCorriente: { type: Type.NUMBER }
-                }
-              },
-              patrimonio: { type: Type.NUMBER },
-              resultados: {
-                type: Type.OBJECT,
-                properties: {
-                  ingresos: { type: Type.NUMBER },
-                  utilidadNeta: { type: Type.NUMBER },
-                  ebit: { type: Type.NUMBER },
-                  ebitda: { type: Type.NUMBER },
-                  gastosFinancieros: { type: Type.NUMBER },
-                  impuestos: { type: Type.NUMBER }
-                }
-              }
-            }
-          },
-          analisisRiesgo: {
-            type: Type.OBJECT,
-            properties: {
-              probabilidadMora: { type: Type.STRING },
-              flags: {
-                type: Type.OBJECT,
-                properties: {
-                  rojas: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  verdes: { type: Type.ARRAY, items: { type: Type.STRING } }
-                }
-              },
-              justificacion: { type: Type.STRING }
-            }
-          }
+          detectedName: { type: Type.STRING },
+          isMatch: { type: Type.BOOLEAN },
+          reason: { type: Type.STRING }
         }
       }
     }
   });
 
   try {
-    const textResponse = response.text;
-    if (!textResponse) throw new Error("Respuesta vacía de Gemini");
-    
-    const rawData = JSON.parse(textResponse);
-    
-    // --- POST-PROCESSING VALIDATION LOGIC ---
-    const results: DocumentValidation[] = [];
-    const today = new Date();
-    
-    const getDaysDiff = (dateStr?: string) => {
-        if (!dateStr) return 999;
-        const d = new Date(dateStr);
-        // @ts-ignore
-        const diffTime = Math.abs(today - d);
-        return Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-    };
-
-    const isDateValid = (dateStr?: string, maxDays = 60) => {
-        if (!dateStr) return false;
-        return getDaysDiff(dateStr) <= maxDays;
-    };
-
-    // 1. Cámara de Comercio
-    const camaraDate = rawData.validacionDocumental.fechasVigencia.camara;
-    const isCamaraValid = isDateValid(camaraDate, 60); 
-    results.push({
-        fileName: "Cámara de Comercio",
-        isValid: isCamaraValid,
-        detectedDate: camaraDate || "No detectada",
-        issue: !camaraDate ? "Fecha no encontrada" : !isCamaraValid ? `Vencido (>60 días: ${getDaysDiff(camaraDate)} días)` : "OK"
-    });
-
-    // 2. Certificación Bancaria
-    const bankDate = rawData.validacionDocumental.fechasVigencia.bancaria;
-    const isBankValid = isDateValid(bankDate, 60);
-    results.push({
-        fileName: "Certificación Bancaria",
-        isValid: isBankValid,
-        detectedDate: bankDate || "No detectada",
-        issue: !bankDate ? "Fecha no encontrada" : !isBankValid ? `Vencido (>60 días)` : "OK"
-    });
-
-    // 3. Referencia Comercial
-    const refDate = rawData.validacionDocumental.fechasVigencia.referencia;
-    const isRefValid = isDateValid(refDate, 90); 
-    results.push({
-        fileName: "Referencia Comercial",
-        isValid: isRefValid,
-        detectedDate: refDate || "No detectada",
-        issue: !refDate ? "Fecha no encontrada" : !isRefValid ? `Vencido (>90 días)` : "OK"
-    });
-
-    // 4. RUT
-    const hasRut = rawData.validacionDocumental.legales.rut;
-    results.push({
-        fileName: "RUT",
-        isValid: hasRut,
-        issue: hasRut ? "OK" : "Documento no detectado o ilegible"
-    });
-
-    // 5. Cédula RL
-    const hasCedula = rawData.validacionDocumental.legales.cedulaRL;
-    results.push({
-        fileName: "Cédula Representante Legal",
-        isValid: hasCedula,
-        issue: hasCedula ? "OK" : "Documento no detectado"
-    });
-
-    // 6. Estados Financieros
-    const financialYears = rawData.validacionDocumental.financieros.aniosEncontrados || [];
-    const currentYear = today.getFullYear();
-    const hasRecentYear = financialYears.some((y: number) => y >= currentYear - 1);
-    results.push({
-        fileName: "Estados Financieros",
-        isValid: hasRecentYear,
-        detectedDate: financialYears.join(", "),
-        issue: hasRecentYear ? "OK" : "No se encontraron estados financieros del año inmediatamente anterior"
-    });
-
-    // 7. Composición Accionaria
-    const signatures = rawData.validacionDocumental.accionaria;
-    const hasSignatures = signatures.firmaRevisor && signatures.firmaRepresentante;
-    results.push({
-        fileName: "Composición Accionaria",
-        isValid: hasSignatures,
-        issue: hasSignatures ? "Firmas OK" : `Faltan firmas: ${!signatures.firmaRevisor ? 'Revisor ' : ''}${!signatures.firmaRepresentante ? 'Representante' : ''}`
-    });
-
-    const overallValid = results.every(r => r.isValid);
-    const summary = overallValid 
-        ? "Todos los documentos cumplen con los requisitos de vigencia y forma." 
-        : "Se detectaron documentos vencidos o incompletos que deben corregirse antes de continuar.";
-
+    const result = JSON.parse(response.text || "{}");
     return {
-        overallValid,
-        results,
-        summary,
-        rawData 
+      isValid: result.isMatch,
+      reason: result.isMatch ? undefined : `Nombre detectado: ${result.detectedName}. No coincide con ${expectedClientName}.`
     };
-
-  } catch (e) {
-    console.error("Error parseando respuesta Gemini:", e);
-    throw new Error("No se pudo extraer la información. Verifique la calidad de los documentos.");
+  } catch (error) {
+    return { isValid: false, reason: "No se pudo validar la identidad del documento." };
   }
 };
 
-// Consolidated One-Shot Analysis (Heavy Risk Analysis - Used by Director)
+/**
+ * OPTIMIZED: Validates a single document for Type Match and Date Validity.
+ * Uses gemini-2.5-flash for maximum speed.
+ */
+export const validateSingleDocument = async (file: File, expectedType: 'RUT' | 'CAMARA' | 'BANCARIA' | 'REFERENCIA' | 'FINANCIEROS' | 'RENTA' | 'CEDULA' | 'COMPOSICION'): Promise<{ isValid: boolean; msg?: string }> => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) throw new Error("API Key not found");
+  
+  const ai = new GoogleGenAI({ apiKey });
+  const filePart = await fileToPart(file);
+  
+  if (!filePart) return { isValid: false, msg: "Error de lectura" };
+
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1; // 1-12
+  const todayStr = now.toISOString().split('T')[0];
+
+  const prompt = `
+  Eres un auditor documental financiero experto. 
+  HOY ES: ${todayStr} (Año ${currentYear}).
+  
+  Analiza la imagen/PDF adjunto (puede ser escaneado, usa OCR visual).
+  
+  TAREA 1: CLASIFICAR DOCUMENTO (detectedType)
+  Opciones: [RUT, CAMARA_COMERCIO, CERTIFICACION_BANCARIA, REFERENCIA_COMERCIAL, ESTADOS_FINANCIEROS, DECLARACION_RENTA, CEDULA, COMPOSICION_ACCIONARIA, OTRO].
+  - "ESTADOS_FINANCIEROS": Balance General, Estado de Situación Financiera. Busca encabezados como "Al 31 de Diciembre".
+  - "DECLARACION_RENTA": Formulario 110, 210 DIAN. Busca la casilla "Año" o "Año Gravable" en la cabecera.
+
+  TAREA 2: EXTRAER FECHA CLAVE (dateFound - YYYY-MM-DD)
+  - Para CAMARA, BANCARIA, REFERENCIA: Busca la **FECHA DE EXPEDICIÓN/EMISIÓN** del documento (generalmente arriba o abajo junto a la firma).
+    *¡CUIDADO! No confundir con fecha de constitución o fechas de resoluciones antiguas.*
+  - Para ESTADOS_FINANCIEROS o DECLARACION_RENTA: Busca el **AÑO DE CORTE** o **AÑO GRAVABLE**.
+    *Si dice "Año Gravable 2023", la fecha es 2023-12-31.*
+    *Si dice "Corte a 31 de Dic 2024", la fecha es 2024-12-31.*
+  
+  Retorna JSON.
+  `;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash', // Vision capable, fast
+    contents: [{ parts: [filePart, { text: prompt }] }],
+    config: {
+      temperature: 0,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          detectedType: { type: Type.STRING, enum: ['RUT', 'CAMARA_COMERCIO', 'CERTIFICACION_BANCARIA', 'REFERENCIA_COMERCIAL', 'ESTADOS_FINANCIEROS', 'DECLARACION_RENTA', 'CEDULA', 'COMPOSICION_ACCIONARIA', 'OTRO'] },
+          dateFound: { type: Type.STRING, description: "YYYY-MM-DD or null" }
+        }
+      }
+    }
+  });
+
+  try {
+    const result = JSON.parse(response.text || "{}");
+    const { detectedType, dateFound } = result;
+
+    // 1. TYPE CHECK MAPPING
+    const typeMap: Record<string, string[]> = {
+        'RUT': ['RUT'],
+        'CAMARA': ['CAMARA_COMERCIO'],
+        'BANCARIA': ['CERTIFICACION_BANCARIA'],
+        'REFERENCIA': ['REFERENCIA_COMERCIAL'],
+        'FINANCIEROS': ['ESTADOS_FINANCIEROS'],
+        'RENTA': ['DECLARACION_RENTA'],
+        'CEDULA': ['CEDULA'],
+        'COMPOSICION': ['COMPOSICION_ACCIONARIA', 'CAMARA_COMERCIO']
+    };
+
+    if (!typeMap[expectedType]?.includes(detectedType)) {
+        // Relax check for financials/renta mix-up as they look similar sometimes
+        const isFinancialMix = (expectedType === 'FINANCIEROS' && detectedType === 'DECLARACION_RENTA') || (expectedType === 'RENTA' && detectedType === 'ESTADOS_FINANCIEROS');
+        
+        if (!isFinancialMix) {
+             return { 
+                isValid: false, 
+                msg: `❌ Tipo incorrecto. Detectado: ${detectedType.replace('_', ' ')}` 
+            };
+        }
+    }
+
+    // 2. DATE CHECK LOGIC
+    if (!dateFound) {
+        if (['CAMARA', 'BANCARIA', 'REFERENCIA', 'FINANCIEROS', 'RENTA'].includes(expectedType)) {
+             return { isValid: false, msg: "❌ No se encontró fecha legible" };
+        }
+        return { isValid: true };
+    }
+
+    const docDate = new Date(dateFound);
+    const docYear = docDate.getFullYear();
+    // @ts-ignore
+    const diffDays = Math.ceil((now - docDate) / (1000 * 60 * 60 * 24));
+
+    // A. REGLAS DE VIGENCIA CORTA (Días)
+    if (expectedType === 'CAMARA' && diffDays > 60) return { isValid: false, msg: `❌ Vencido hace ${diffDays - 60} días (>60)` };
+    if (expectedType === 'BANCARIA' && diffDays > 60) return { isValid: false, msg: `❌ Vencido hace ${diffDays - 60} días (>60)` };
+    if (expectedType === 'REFERENCIA' && diffDays > 90) return { isValid: false, msg: `❌ Vencido hace ${diffDays - 90} días (>90)` };
+    
+    // B. REGLAS DE VIGENCIA ANUAL (EE.FF y Renta)
+    // Regla: Debe ser Año Inmediatamente Anterior o Año en Curso.
+    // Ejemplo: Si estamos en 2025, aceptamos 2024 o 2025. 2023 es VENCIDO.
+    // Excepción: Si estamos en los primeros meses (Ene-Abril), a veces Renta anterior no está lista, pero EE.FF preliminares sí.
+    // Política Equitel: Exigir cierre del año anterior.
+    
+    if (expectedType === 'FINANCIEROS' || expectedType === 'RENTA') {
+        const minValidYear = currentYear - 1; // e.g. 2025 - 1 = 2024
+        
+        if (docYear < minValidYear) {
+            return { isValid: false, msg: `❌ Año ${docYear} vencido. Se requiere ${minValidYear} o ${currentYear}.` };
+        }
+    }
+
+    return { isValid: true };
+
+  } catch (e) {
+    console.error("Fast Validation Error", e);
+    return { isValid: false, msg: "Error técnico validando" };
+  }
+};
+
+export const validateCommercialDocuments = async (files: File[], clientName: string, nit: string): Promise<ValidationResult> => {
+    return { overallValid: true, results: [], summary: "Batch validation deprecated" };
+};
+
 export const runFullCreditAnalysis = async (allFiles: File[], clientName: string, nit: string) => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) throw new Error("API Key not found");
@@ -410,7 +314,6 @@ export const runFullCreditAnalysis = async (allFiles: File[], clientName: string
           verdict: { type: Type.STRING, enum: ["APROBADO", "NEGADO"] },
           suggestedCupo: { type: Type.NUMBER },
           
-          // ADDED: Explicit breakdown for the 6 indicators
           cupoVariables: {
             type: Type.OBJECT,
             properties: {

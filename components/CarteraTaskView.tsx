@@ -1,7 +1,9 @@
 
 import React, { useState } from 'react';
 import { CreditAnalysis } from '../types';
-import { Upload, CheckCircle, ArrowRight, FileText, Send, Loader2 } from 'lucide-react';
+import { Upload, CheckCircle, ArrowRight, FileText, Send, Loader2, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { validateDocIdentity } from '../services/gemini';
+import PINModal from './PINModal';
 
 interface CarteraTaskViewProps {
   analysis: CreditAnalysis;
@@ -11,6 +13,10 @@ interface CarteraTaskViewProps {
 
 const CarteraTaskView: React.FC<CarteraTaskViewProps> = ({ analysis, onAdvance, onBack }) => {
   const [loading, setLoading] = useState(false);
+  const [validatingIdentity, setValidatingIdentity] = useState(false);
+  const [identityError, setIdentityError] = useState<string | null>(null);
+  const [showPin, setShowPin] = useState(false);
+  
   const [riskFiles, setRiskFiles] = useState<{ datacredito: File | null; informa: File | null }>({
     datacredito: analysis.riskFiles?.datacredito || null,
     informa: analysis.riskFiles?.informa || null
@@ -18,15 +24,46 @@ const CarteraTaskView: React.FC<CarteraTaskViewProps> = ({ analysis, onAdvance, 
 
   const canAdvance = !!(riskFiles.datacredito && riskFiles.informa);
 
-  const handleSubmit = async () => {
-    setLoading(true);
-    // Simulate processing
-    await new Promise(resolve => setTimeout(resolve, 1000));
+  const handleSubmit = async (override = false) => {
+    if (!canAdvance) return;
     
+    // 1. Validate Identity Logic (Only if not overriding)
+    if (!override) {
+        setValidatingIdentity(true);
+        setIdentityError(null);
+        try {
+            // Check DataCredito
+            const dcCheck = await validateDocIdentity(riskFiles.datacredito!, analysis.clientName);
+            if (!dcCheck.isValid) {
+                setIdentityError(`Datacrédito: ${dcCheck.reason}`);
+                setValidatingIdentity(false);
+                return;
+            }
+
+            // Check Informa
+            const infCheck = await validateDocIdentity(riskFiles.informa!, analysis.clientName);
+            if (!infCheck.isValid) {
+                setIdentityError(`Informa: ${infCheck.reason}`);
+                setValidatingIdentity(false);
+                return;
+            }
+
+        } catch (e) {
+            setIdentityError("Error validando identidad de documentos.");
+            setValidatingIdentity(false);
+            return;
+        }
+        setValidatingIdentity(false);
+    }
+
+    // 2. Advance Logic (Trigger Full Analysis in App.tsx)
+    setLoading(true);
+    
+    // We pass the files back. App.tsx will handle the heavy lifting (upload + AI Analysis)
     onAdvance({
       ...analysis,
       riskFiles: riskFiles,
-      status: 'PENDIENTE_DIRECTOR'
+      status: 'PENDIENTE_DIRECTOR' 
     });
   };
 
@@ -38,7 +75,7 @@ const CarteraTaskView: React.FC<CarteraTaskViewProps> = ({ analysis, onAdvance, 
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Left: Summary of Commercial Uploads (Read Only) */}
+        {/* Left: Summary */}
         <div className="bg-white p-6 rounded-3xl border border-slate-200">
            <div className="flex items-center gap-3 mb-4 pb-4 border-b">
              <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center">
@@ -63,13 +100,13 @@ const CarteraTaskView: React.FC<CarteraTaskViewProps> = ({ analysis, onAdvance, 
            </div>
         </div>
 
-        {/* Right: Risk Uploads (Action Required) */}
+        {/* Right: Risk Uploads */}
         <div className="bg-black p-8 rounded-3xl border border-slate-800 relative overflow-hidden text-white">
            <div className="absolute top-0 right-0 p-6 opacity-20 text-equitel-red">
              <Upload size={100} />
            </div>
            <h3 className="font-bold text-white text-sm mb-2 uppercase">Acción Requerida</h3>
-           <p className="text-xs text-slate-400 mb-6">Cargar reportes de centrales de riesgo para completar el expediente.</p>
+           <p className="text-xs text-slate-400 mb-6">Cargar reportes de centrales de riesgo. El sistema validará que correspondan al cliente.</p>
            
            <div className="space-y-4">
              <RiskFileDrop 
@@ -84,21 +121,42 @@ const CarteraTaskView: React.FC<CarteraTaskViewProps> = ({ analysis, onAdvance, 
              />
            </div>
 
+           {identityError && (
+             <div className="mt-4 p-3 bg-red-900/50 border border-red-500 rounded-xl flex flex-col gap-2">
+                <div className="flex items-center gap-2 text-red-300 font-bold text-xs uppercase">
+                    <AlertTriangle size={14} /> Error de Identidad
+                </div>
+                <p className="text-[10px] text-red-200 leading-tight">{identityError}</p>
+                <button 
+                  onClick={() => setShowPin(true)}
+                  className="mt-1 text-[9px] text-white underline decoration-white underline-offset-2 hover:text-red-200 text-left"
+                >
+                    Autorizar excepción con PIN
+                </button>
+             </div>
+           )}
+
            <button 
-             onClick={handleSubmit}
-             disabled={!canAdvance || loading}
+             onClick={() => handleSubmit(false)}
+             disabled={!canAdvance || loading || validatingIdentity}
              className="w-full mt-8 py-4 bg-equitel-red text-white rounded-xl font-black uppercase text-xs tracking-widest hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg shadow-red-900/50"
            >
-             {loading ? <Loader2 className="animate-spin" /> : <Send size={16} />}
-             {loading ? "Procesando..." : "Avanzar a Director"}
+             {loading || validatingIdentity ? <Loader2 className="animate-spin" /> : <ShieldCheck size={16} />}
+             {validatingIdentity ? "Validando Identidad..." : loading ? "Analizando & Enviando..." : "Validar y Avanzar"}
            </button>
         </div>
       </div>
+
+      {showPin && (
+        <PINModal 
+            onSuccess={() => { setShowPin(false); handleSubmit(true); }}
+            onCancel={() => setShowPin(false)}
+        />
+      )}
     </div>
   );
 };
 
-// IMPROVED RiskFileDrop: Label as container
 const RiskFileDrop = ({ label, file, onSelect }: any) => (
   <label 
     htmlFor={label}

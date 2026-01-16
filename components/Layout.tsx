@@ -14,22 +14,25 @@ const LogoSVG = ({ className = "w-full h-full", color = "currentColor" }: { clas
     {/* Outer Ring */}
     <circle cx="30" cy="30" r="25" stroke={color} strokeWidth="4" fill="none"/>
     
-    {/* Body of 'E' (The 'C' shape with rounded corners) */}
-    <path 
-      d="M 42 20 L 27 20 Q 20 20 20 27 L 20 33 Q 20 40 27 40 L 42 40" 
-      stroke="#DA291C" 
-      strokeWidth="5" 
-      strokeLinecap="butt" 
-      fill="none"
-    />
-    
-    {/* Floating middle bar */}
-    <path 
-      d="M 27 30 L 38 30" 
-      stroke="#DA291C" 
-      strokeWidth="5" 
-      strokeLinecap="butt"
-    />
+    {/* Rotated E Group */}
+    <g transform="rotate(-30 30 30)">
+      {/* Body of 'E' (The 'C' shape with rounded corners) */}
+      <path 
+        d="M 42 20 L 27 20 Q 20 20 20 27 L 20 33 Q 20 40 27 40 L 42 40" 
+        stroke="#DA291C" 
+        strokeWidth="5" 
+        strokeLinecap="butt" 
+        fill="none"
+      />
+      
+      {/* Floating middle bar - Extended to 42 */}
+      <path 
+        d="M 27 30 L 42 30" 
+        stroke="#DA291C" 
+        strokeWidth="5" 
+        strokeLinecap="butt"
+      />
+    </g>
     
     {/* Text EQUITEL */}
     <text x="65" y="38" fill={color} fontFamily="Inter, sans-serif" fontWeight="900" fontSize="24" letterSpacing="0.1em">EQUITEL</text>
