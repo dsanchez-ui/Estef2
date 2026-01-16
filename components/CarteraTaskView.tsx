@@ -24,6 +24,9 @@ const CarteraTaskView: React.FC<CarteraTaskViewProps> = ({ analysis, onAdvance, 
 
   const canAdvance = !!(riskFiles.datacredito && riskFiles.informa);
 
+  // Helper to get list of files from Metadata (Validation Result) instead of Memory (commercialFiles)
+  const commercialFileList = analysis.validationResult?.results || [];
+
   const handleSubmit = async (override = false) => {
     if (!canAdvance) return;
     
@@ -87,16 +90,21 @@ const CarteraTaskView: React.FC<CarteraTaskViewProps> = ({ analysis, onAdvance, 
              </div>
            </div>
            
-           <div className="grid grid-cols-2 gap-2">
-             {Object.entries(analysis.commercialFiles).map(([key, file]) => (
-               <div key={key} className="p-3 bg-slate-50 rounded-xl flex items-center gap-2 border border-slate-100">
-                 <CheckCircle size={14} className="text-green-500" />
-                 <span className="text-[10px] font-bold uppercase text-slate-600 truncate flex-1">
-                   {key.replace(/([A-Z])/g, ' $1').trim()}
-                 </span>
-                 <span className="text-[9px] text-slate-400 bg-white px-2 rounded border">PDF</span>
-               </div>
-             ))}
+           <div className="grid grid-cols-2 gap-2 max-h-[300px] overflow-y-auto">
+             {commercialFileList.length > 0 ? (
+                commercialFileList.map((doc, idx) => (
+                   <div key={idx} className={`p-3 rounded-xl flex items-center gap-2 border ${doc.isValid ? 'bg-slate-50 border-slate-100' : 'bg-red-50 border-red-100'}`}>
+                     {doc.isValid ? <CheckCircle size={14} className="text-green-500" /> : <AlertTriangle size={14} className="text-red-500" />}
+                     <span className="text-[10px] font-bold uppercase text-slate-600 truncate flex-1" title={doc.fileName}>
+                       {doc.fileName}
+                     </span>
+                   </div>
+                ))
+             ) : (
+                <p className="col-span-2 text-xs text-slate-400 italic text-center py-4">
+                   No se encontró lista de documentos.
+                </p>
+             )}
            </div>
         </div>
 
@@ -142,7 +150,7 @@ const CarteraTaskView: React.FC<CarteraTaskViewProps> = ({ analysis, onAdvance, 
              className="w-full mt-8 py-4 bg-equitel-red text-white rounded-xl font-black uppercase text-xs tracking-widest hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg shadow-red-900/50"
            >
              {loading || validatingIdentity ? <Loader2 className="animate-spin" /> : <ShieldCheck size={16} />}
-             {validatingIdentity ? "Validando Identidad..." : loading ? "Analizando & Enviando..." : "Validar y Avanzar"}
+             {validatingIdentity ? "Validando Identidad..." : loading ? "Analizando..." : "Validar y Avanzar"}
            </button>
         </div>
       </div>

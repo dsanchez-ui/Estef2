@@ -11,13 +11,10 @@ import PINModal from './components/PINModal';
 import SuccessView from './components/SuccessView';
 import { runFullCreditAnalysis } from './services/gemini';
 import { sendEmail } from './services/email';
-import { saveAnalysisToCloud, exportToDriveAndNotify } from './services/server'; // Added exportToDriveAndNotify
+import { saveAnalysisToCloud, exportToDriveAndNotify, getAnalysesFromCloud, saveAnalysisState, loadAnalysisState, fetchProjectFiles } from './services/server'; // Updated imports
 import { fileToBase64, redondearComercial, formatCOP } from './utils/calculations';
 import CommercialDashboard from './components/CommercialDashboard';
-import { FileText, CheckCircle2, XCircle, Clock, AlertCircle } from 'lucide-react';
-
-// Mock Data for Demo
-const MOCK_DB: CreditAnalysis[] = [];
+import { FileText, CheckCircle2, XCircle, Clock, AlertCircle, RefreshCw } from 'lucide-react';
 
 // Global Loading Overlay Component
 const LoadingOverlay = ({ visible, message }: { visible: boolean, message: string }) => {
@@ -36,15 +33,99 @@ const App: React.FC = () => {
   const [showPIN, setShowPIN] = useState(false);
   const [view, setView] = useState<'LIST' | 'NEW' | 'TASK' | 'DETAIL' | 'SUCCESS'>('LIST');
   const [successType, setSuccessType] = useState<'COMMERCIAL_CREATED' | 'CARTERA_UPDATED'>('COMMERCIAL_CREATED');
-  const [analyses, setAnalyses] = useState<CreditAnalysis[]>(MOCK_DB);
+  const [analyses, setAnalyses] = useState<CreditAnalysis[]>([]); // Empty initially
   const [selectedAnalysis, setSelectedAnalysis] = useState<CreditAnalysis | null>(null);
   
   // Consolidated Loading State
   const [globalLoading, setGlobalLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("");
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Global Configuration State
   const [notificationEmails, setNotificationEmails] = useState("dsanchez@equitel.com.co");
+
+  // --- PERSISTENCE LOGIC START ---
+  const hydrateData = async () => {
+    setIsSyncing(true);
+    try {
+      const rawData = await getAnalysesFromCloud();
+      
+      const mappedAnalyses: CreditAnalysis[] = rawData.map((row: any) => {
+        // Parse Cupo Detail if exists (e.g. "Cupo: $50M - Plazo: 30 días")
+        let assignedCupo = 0;
+        let assignedPlazo = 0;
+        
+        if (row.cupoInfo) {
+           const cupoMatch = row.cupoInfo.match(/Cupo:\s*\$\s*([\d\.,]+)/);
+           if (cupoMatch) assignedCupo = parseInt(cupoMatch[1].replace(/\./g, '').replace(/,/g, ''));
+           
+           const plazoMatch = row.cupoInfo.match(/Plazo:\s*(\d+)/);
+           if (plazoMatch) assignedPlazo = parseInt(plazoMatch[1]);
+        }
+
+        return {
+          id: row.id,
+          clientName: row.clientName,
+          nit: row.nit,
+          comercial: { name: row.comercialName, email: '' }, // Email is transient in this view
+          date: new Date(row.date).toLocaleDateString(),
+          status: row.status as any,
+          driveFolderUrl: row.driveUrl,
+          // Empty buckets because files are not downloadable securely to browser memory
+          // This relies on Cartera re-uploading risk files for AI, or AI logic adapting.
+          commercialFiles: {}, 
+          riskFiles: {},
+          assignedCupo,
+          assignedPlazo
+        } as CreditAnalysis;
+      });
+
+      setAnalyses(mappedAnalyses);
+    } catch (e) {
+      console.error("Error hydrating data", e);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    hydrateData();
+  }, []);
+  // --- PERSISTENCE LOGIC END ---
+
+  // LOAD FULL STATE ON SELECTION
+  const handleSelectAnalysis = async (basicAnalysis: CreditAnalysis) => {
+      setGlobalLoading(true);
+      setLoadingMessage("Recuperando expediente completo desde la nube...");
+      
+      try {
+          if (basicAnalysis.driveFolderUrl) {
+              const fullData = await loadAnalysisState(basicAnalysis.driveFolderUrl);
+              
+              if (fullData) {
+                  // Merge basic list data (which is authoritative for status) with deep detail data
+                  const merged = { 
+                      ...fullData,
+                      status: basicAnalysis.status, // Trust Sheet status
+                      id: basicAnalysis.id // Trust Sheet ID
+                  };
+                  setSelectedAnalysis(merged);
+              } else {
+                  // Fallback if no JSON exists (legacy or just created)
+                  setSelectedAnalysis(basicAnalysis);
+              }
+          } else {
+              setSelectedAnalysis(basicAnalysis);
+          }
+          setView('DETAIL');
+      } catch (e) {
+          console.error("Error loading deep state", e);
+          setSelectedAnalysis(basicAnalysis);
+          setView('DETAIL');
+      } finally {
+          setGlobalLoading(false);
+      }
+  };
 
   // Role Selection Logic
   const handleRoleSelect = (r: UserRole) => {
@@ -99,6 +180,11 @@ const App: React.FC = () => {
         driveFolderUrl: response.urlCarpeta || undefined // CAPTURE URL
       };
 
+      // Save Initial JSON State
+      if (analysisWithRealId.driveFolderUrl) {
+          await saveAnalysisState(analysisWithRealId.driveFolderUrl, analysisWithRealId);
+      }
+
       // F. Update Local State 
       setAnalyses(prev => [analysisWithRealId, ...prev]);
 
@@ -119,7 +205,7 @@ const App: React.FC = () => {
     setGlobalLoading(true);
     
     try {
-        // STEP A: Prepare Files
+        // STEP A: Prepare Files for Upload (Risk Only)
         setLoadingMessage("Subiendo documentos de riesgo a Google Drive...");
         const filesToUpload = await Promise.all(
             Object.entries(updated.riskFiles).map(async ([key, file]) => {
@@ -133,15 +219,41 @@ const App: React.FC = () => {
         );
         const cleanFilesToUpload = filesToUpload.filter(f => f !== null);
 
-        // STEP B: Run Full AI Analysis (One Shot)
-        setLoadingMessage("Ejecutando Análisis Financiero Estefanía IA (Esto puede tomar unos segundos)...");
+        // STEP B: Gather Files for AI Analysis
+        // CRITICAL UPDATE: If commercialFiles are empty (reloaded page), fetch them from Drive
+        setLoadingMessage("Recuperando Estados Financieros de Drive para análisis IA...");
         
-        const allFiles = [
-            ...Object.values(updated.commercialFiles || {}), 
-            ...Object.values(updated.riskFiles || {})
-        ].filter((f): f is File => f instanceof File);
+        let aiFiles: any[] = [
+            ...Object.values(updated.riskFiles || {}).filter(f => f instanceof File)
+        ];
 
-        const aiResult = await runFullCreditAnalysis(allFiles, updated.clientName, updated.nit);
+        // Check if we need to fetch remote files
+        const hasLocalFinancials = Object.values(updated.commercialFiles || {}).some(f => f instanceof File);
+        
+        if (!hasLocalFinancials && updated.driveFolderId) {
+             console.log("Fetching remote files for AI context...");
+             try {
+                const remoteFiles = await fetchProjectFiles(updated.driveFolderId);
+                // Convert remote format to what runFullCreditAnalysis expects
+                const formattedRemoteFiles = remoteFiles.map((rf: any) => ({
+                    name: rf.name,
+                    inlineData: {
+                        data: rf.data,
+                        mimeType: rf.mimeType
+                    }
+                }));
+                aiFiles = [...aiFiles, ...formattedRemoteFiles];
+                console.log(`Fetched ${remoteFiles.length} remote files for AI.`);
+             } catch (e) {
+                 console.warn("Failed to fetch remote files, AI will run with limited context", e);
+             }
+        } else {
+             aiFiles = [...aiFiles, ...Object.values(updated.commercialFiles || {}).filter(f => f instanceof File)];
+        }
+
+        // STEP C: Run AI Analysis
+        setLoadingMessage("Ejecutando Análisis Financiero Estefanía IA...");
+        const aiResult = await runFullCreditAnalysis(aiFiles, updated.clientName, updated.nit);
         
         // Calculate ranges based on the average if AI doesn't give them explicit
         const riskFactor = aiResult.scoreProbability > 0.5 ? 0.5 : 0.8; 
@@ -165,7 +277,7 @@ const App: React.FC = () => {
           aiResult: aiResult // Save result for persistence
         };
 
-        // STEP C: Upload & Trigger Notification
+        // STEP D: Upload & Trigger Notification
         setLoadingMessage("Guardando resultados y notificando a Dirección...");
         const payload = {
             targetFolderId: updated.driveFolderId,
@@ -177,10 +289,14 @@ const App: React.FC = () => {
                 estado: 'PENDIENTE_DIRECTOR' // Email says "Ready for Director"
             },
             archivos: cleanFilesToUpload
-            // Note: In a real app we'd also send the 'aiResult' JSON to store in a DB/Sheet column here
         };
 
         await saveAnalysisToCloud(payload);
+
+        // ** CRITICAL: SAVE FULL JSON STATE **
+        if (analyzedAnalysis.driveFolderUrl) {
+            await saveAnalysisState(analyzedAnalysis.driveFolderUrl, analyzedAnalysis);
+        }
 
         // Update Local State
         setAnalyses(prev => prev.map(a => a.id === updated.id ? analyzedAnalysis : a));
@@ -190,17 +306,14 @@ const App: React.FC = () => {
 
     } catch (error: any) {
         alert("Error en proceso Cartera: " + error.message);
+        console.error(error);
     } finally {
         setGlobalLoading(false);
     }
   };
 
   // 3. Director Flow: Just Open (AI is already done)
-  const handleDirectorOpen = async (analysis: CreditAnalysis) => {
-      // Just set view, AI is pre-calculated in Cartera step or persisted
-      setSelectedAnalysis(analysis);
-      setView('DETAIL');
-  };
+  // This just uses handleSelectAnalysis logic now
 
   const handleFinalDecision = async (id: string, action: 'APROBADO' | 'NEGADO', manualCupo?: number, manualPlazo?: number, reason?: string) => {
     // 1. UPDATE LOCAL STATE
@@ -228,6 +341,10 @@ const App: React.FC = () => {
     const updatedSelected = updatedAnalyses.find(a => a.id === id);
     if (updatedSelected) {
         setSelectedAnalysis(updatedSelected);
+        // ** PERSIST FINAL JSON STATE **
+        if (updatedSelected.driveFolderUrl) {
+            saveAnalysisState(updatedSelected.driveFolderUrl, updatedSelected).catch(console.error);
+        }
     }
 
     // 2. IMMEDIATE SHEET UPDATE (Fire & Forget / Async)
@@ -253,8 +370,6 @@ const App: React.FC = () => {
          }
        }).catch(err => console.error("Failed to update sheet immediately:", err));
     }
-    
-    // REMOVED: setView('LIST'); -> We want to stay in DETAIL view
   };
 
   if (!role) {
@@ -275,11 +390,22 @@ const App: React.FC = () => {
 
       {view === 'LIST' && (
         <>
+           <div className="flex justify-end mb-4 -mt-16 mr-20 relative z-30">
+              <button 
+                onClick={hydrateData} 
+                disabled={isSyncing}
+                className="flex items-center gap-2 px-3 py-2 bg-white rounded-lg text-xs font-bold text-slate-500 hover:text-equitel-red transition-colors shadow-sm"
+              >
+                <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
+                {isSyncing ? "Sincronizando..." : "Actualizar Datos"}
+              </button>
+           </div>
+
            {role === UserRole.COMERCIAL && (
              <CommercialDashboard 
                analyses={visibleAnalyses} 
                onNew={() => setView('NEW')} 
-               onSelect={(a) => { setSelectedAnalysis(a); setView('DETAIL'); }} 
+               onSelect={handleSelectAnalysis} 
              />
            )}
 
@@ -305,14 +431,17 @@ const App: React.FC = () => {
                      </div>
                   ) : (
                     visibleAnalyses.filter(a => a.status === 'PENDIENTE_CARTERA').map(a => (
-                       <div key={a.id} onClick={() => { setSelectedAnalysis(a); setView('TASK'); }} className="bg-white p-6 rounded-2xl border border-slate-200 hover:border-blue-400 cursor-pointer shadow-sm group transition-all hover:shadow-md">
+                       <div key={a.id} onClick={() => handleSelectAnalysis(a).then(() => setView('TASK'))} className="bg-white p-6 rounded-2xl border border-slate-200 hover:border-blue-400 cursor-pointer shadow-sm group transition-all hover:shadow-md">
                           <div className="flex justify-between items-center">
                              <div className="flex items-center gap-4">
                                 <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
                                   {a.clientName.charAt(0)}
                                 </div>
                                 <div>
-                                    <p className="font-bold text-slate-900">{a.clientName}</p>
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-black border border-slate-200">{a.id}</span>
+                                      <p className="font-bold text-slate-900">{a.clientName}</p>
+                                    </div>
                                     <p className="text-xs text-slate-500">NIT: {a.nit} • Solicitado: {a.date}</p>
                                 </div>
                              </div>
@@ -336,6 +465,7 @@ const App: React.FC = () => {
                      <table className="w-full text-left">
                         <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-400">
                           <tr>
+                            <th className="px-6 py-4">Radicado</th>
                             <th className="px-6 py-4">Cliente</th>
                             <th className="px-6 py-4">Estado</th>
                             <th className="px-6 py-4">Resultado</th>
@@ -344,7 +474,12 @@ const App: React.FC = () => {
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                            {visibleAnalyses.filter(a => a.status !== 'PENDIENTE_CARTERA').map(a => (
-                             <tr key={a.id} className="hover:bg-slate-50 cursor-pointer" onClick={() => { setSelectedAnalysis(a); setView('DETAIL'); }}>
+                             <tr key={a.id} className="hover:bg-slate-50 cursor-pointer" onClick={() => handleSelectAnalysis(a)}>
+                                <td className="px-6 py-4">
+                                  <span className="inline-block px-2 py-1 rounded bg-slate-100 text-slate-600 text-[10px] font-black border border-slate-200">
+                                    {a.id}
+                                  </span>
+                                </td>
                                 <td className="px-6 py-4 text-sm font-bold text-slate-700">{a.clientName}</td>
                                 <td className="px-6 py-4">
                                    <span className={`px-2 py-1 rounded-full text-[9px] font-black uppercase ${
@@ -365,7 +500,7 @@ const App: React.FC = () => {
                              </tr>
                            ))}
                            {visibleAnalyses.filter(a => a.status !== 'PENDIENTE_CARTERA').length === 0 && (
-                             <tr><td colSpan={4} className="py-8 text-center text-xs text-slate-400">No hay historial disponible.</td></tr>
+                             <tr><td colSpan={5} className="py-8 text-center text-xs text-slate-400">No hay historial disponible.</td></tr>
                            )}
                         </tbody>
                      </table>
@@ -377,7 +512,7 @@ const App: React.FC = () => {
            {role === UserRole.DIRECTOR && (
              <DirectorDashboard 
                analyses={analyses} 
-               onSelect={handleDirectorOpen}
+               onSelect={handleSelectAnalysis}
                notificationEmails={notificationEmails}
                onUpdateEmails={setNotificationEmails}
              />

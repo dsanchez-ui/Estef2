@@ -43,12 +43,35 @@ export const saveAnalysisToCloud = async (payload: any): Promise<any> => {
   }
 };
 
+/**
+ * Recovers all analyses from Google Sheets to hydrate the app state.
+ */
+export const getAnalysesFromCloud = async (): Promise<any[]> => {
+  try {
+    const response = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'GET_ALL' }) // Special action flag for backend
+    });
+
+    const result = await response.json();
+    if (result.success && Array.isArray(result.data)) {
+        return result.data;
+    }
+    return [];
+  } catch (error) {
+    console.error("Failed to fetch analyses:", error);
+    return [];
+  }
+};
+
 interface BackendActionPayload {
-  action: 'SAVE_REPORT' | 'SEND_EMAIL' | 'UPDATE_SHEET';
+  action: 'SAVE_REPORT' | 'SEND_EMAIL' | 'UPDATE_SHEET' | 'SAVE_STATE' | 'LOAD_STATE' | 'FETCH_FILES_FOR_AI';
   folderUrl?: string; 
   folderId?: string; 
   htmlContent?: string;
   fileName?: string;
+  jsonData?: string; // For SAVE_STATE
   emailData?: {
     to: string;
     subject: string;
@@ -65,7 +88,7 @@ interface BackendActionPayload {
   };
 }
 
-export const exportToDriveAndNotify = async (payload: BackendActionPayload): Promise<{ success: boolean; message: string }> => {
+export const exportToDriveAndNotify = async (payload: BackendActionPayload): Promise<{ success: boolean; message: string; jsonContent?: string; files?: any[] }> => {
   try {
     const response = await fetch(APPS_SCRIPT_URL, {
       method: 'POST',
@@ -74,11 +97,60 @@ export const exportToDriveAndNotify = async (payload: BackendActionPayload): Pro
     });
 
     const result = await response.json();
-    if (!result.success) throw new Error(result.error || "Error desconocido en backend");
+    if (!result.success) {
+        // Safe fail for load action
+        if (payload.action === 'LOAD_STATE') return { success: false, message: result.message || "No data" };
+        throw new Error(result.error || "Error desconocido en backend");
+    }
     
-    return { success: true, message: result.message };
+    return { success: true, message: result.message, jsonContent: result.jsonContent, files: result.files };
   } catch (error: any) {
     console.error("Backend Action Failed:", error);
     return { success: false, message: error.message };
   }
+};
+
+/**
+ * Saves the full CreditAnalysis state as a JSON file in the client's Drive folder.
+ */
+export const saveAnalysisState = async (folderUrl: string, analysis: any) => {
+    // Strip heavy file objects, keep only metadata if needed (or rely on structure)
+    // We create a "lean" version of the object
+    const leanAnalysis = {
+        ...analysis,
+        commercialFiles: {}, // Files can't be saved to JSON string
+        riskFiles: {}
+    };
+    
+    return await exportToDriveAndNotify({
+        action: 'SAVE_STATE',
+        folderUrl: folderUrl,
+        jsonData: JSON.stringify(leanAnalysis)
+    });
+};
+
+/**
+ * Loads the full CreditAnalysis state from the JSON file in Drive.
+ */
+export const loadAnalysisState = async (folderUrl: string) => {
+    const result = await exportToDriveAndNotify({
+        action: 'LOAD_STATE',
+        folderUrl: folderUrl
+    });
+    
+    if (result.success && result.jsonContent) {
+        return JSON.parse(result.jsonContent);
+    }
+    return null;
+};
+
+/**
+ * Fetches relevant files (Financials, etc.) from the specific Drive Folder as Base64 to feed the AI
+ */
+export const fetchProjectFiles = async (folderId: string) => {
+   const result = await exportToDriveAndNotify({
+      action: 'FETCH_FILES_FOR_AI',
+      folderId: folderId
+   });
+   return result.files || [];
 };

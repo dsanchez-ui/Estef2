@@ -3,9 +3,16 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { formatCOP } from '../utils/calculations';
 import { CreditAnalysis, ValidationResult, DocumentValidation } from '../types';
 
-const fileToPart = async (file: File) => {
+// Updated Helper: Can handle File OR a pre-processed object with inlineData
+const fileToPart = async (file: File | { name: string, inlineData: { data: string, mimeType: string } }) => {
   return new Promise((resolve) => {
-    // GUARD: Check if valid file object
+    // Case A: Pre-processed Base64 (from Drive fetch)
+    if ('inlineData' in file) {
+       resolve({ inlineData: file.inlineData });
+       return;
+    }
+
+    // Case B: Browser File Object
     if (!file || !(file instanceof Blob)) {
         console.warn("Invalid file passed to Gemini part converter", file);
         resolve(null);
@@ -249,7 +256,8 @@ export const validateCommercialDocuments = async (files: File[], clientName: str
     return { overallValid: true, results: [], summary: "Batch validation deprecated" };
 };
 
-export const runFullCreditAnalysis = async (allFiles: File[], clientName: string, nit: string) => {
+// SIGNATURE UPDATE: Now supports partial file objects
+export const runFullCreditAnalysis = async (allFiles: (File | { name: string, inlineData: { data: string, mimeType: string } })[], clientName: string, nit: string) => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) throw new Error("API Key not found");
   

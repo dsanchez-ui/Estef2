@@ -84,6 +84,7 @@ const CommercialDashboard: React.FC<CommercialDashboardProps> = ({ analyses, onN
           <table className="w-full text-left">
             <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-400">
               <tr>
+                <th className="px-6 py-4">Radicado</th>
                 <th className="px-6 py-4">Fecha</th>
                 <th className="px-6 py-4">Cliente</th>
                 <th className="px-6 py-4">Cupo</th>
@@ -94,6 +95,11 @@ const CommercialDashboard: React.FC<CommercialDashboardProps> = ({ analyses, onN
             <tbody className="divide-y divide-slate-100">
               {analyses.map(a => (
                 <tr key={a.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => onSelect(a)}>
+                  <td className="px-6 py-4">
+                    <span className="inline-block px-2 py-1 rounded bg-slate-100 text-slate-600 text-[10px] font-black border border-slate-200">
+                      {a.id}
+                    </span>
+                  </td>
                   <td className="px-6 py-4 text-sm font-medium text-slate-600">
                     {a.date}
                   </td>
@@ -119,7 +125,7 @@ const CommercialDashboard: React.FC<CommercialDashboardProps> = ({ analyses, onN
               ))}
               {analyses.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="py-20 text-center text-slate-400">
+                  <td colSpan={6} className="py-20 text-center text-slate-400">
                     <div className="flex flex-col items-center gap-4">
                       <FileText size={48} className="text-slate-200" />
                       <p>No has realizado ninguna solicitud aún.</p>

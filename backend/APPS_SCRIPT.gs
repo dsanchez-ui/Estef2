@@ -2,7 +2,7 @@
 /**
  * ==========================================
  * ESTEFANÍA 2.0 - BACKEND GOOGLE APPS SCRIPT
- * MODO: UPSERT (ACTUALIZAR O INSERTAR) + NOTIFICACIONES AVANZADAS
+ * MODO: UPSERT (ACTUALIZAR O INSERTAR) + NOTIFICACIONES AVANZADAS + LECTURA + PERSISTENCIA JSON + LECTURA BINARIA
  * ==========================================
  */
 
@@ -32,6 +32,7 @@ const COLS = {
 function doPost(e) {
   const lock = LockService.getScriptLock();
   try {
+    // Reducir tiempo de espera de lock para lecturas rápidas
     lock.waitLock(30000); 
 
     if (!e || !e.postData || !e.postData.contents) {
@@ -40,10 +41,17 @@ function doPost(e) {
 
     const data = JSON.parse(e.postData.contents);
 
+    // 1. ACCIÓN DE LECTURA (LISTADO GENERAL)
+    if (data.action === 'GET_ALL') {
+       return getAllApplications();
+    }
+
+    // 2. ACCIONES ESPECÍFICAS (PDF, EMAIL, UPDATE, JSON STATE, FETCH_FILES)
     if (data.backendAction) {
       return handleBackendAction(data.backendAction);
     }
 
+    // 3. FLUJO DE CARGA DE ARCHIVOS (SUBIDA)
     if (data.payload) {
       return handleUploadAndLog(data.payload);
     }
@@ -59,6 +67,41 @@ function doPost(e) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * RECUPERA TODAS LAS SOLICITUDES DEL SHEET PARA EL FRONTEND
+ */
+function getAllApplications() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const lastRow = sheet.getLastRow();
+  
+  if (lastRow < 2) {
+    return ContentService.createTextOutput(JSON.stringify({ success: true, data: [] }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  // Leer todo el rango de datos (fila 2 hasta la última)
+  const range = sheet.getRange(2, 1, lastRow - 1, 12);
+  const values = range.getValues(); // Array de Arrays
+
+  // Mapear a objetos JSON ligeros
+  const cleanData = values.map(row => ({
+    date: row[COLS.FECHA - 1],
+    id: row[COLS.ID_SOLICITUD - 1],
+    clientName: row[COLS.RAZON_SOCIAL - 1],
+    nit: row[COLS.NIT - 1],
+    comercialName: row[COLS.COMERCIAL - 1],
+    status: row[COLS.ESTADO - 1],
+    driveUrl: row[COLS.LINK_DRIVE - 1],
+    // Datos opcionales para reconstruir contexto visual en lista
+    cupoInfo: row[COLS.APROBACION_CUPO - 1]
+  })).filter(item => item.id && item.id !== ""); 
+
+  return ContentService.createTextOutput(JSON.stringify({ 
+    success: true, 
+    data: cleanData.reverse() // Mostrar las más recientes primero
+  })).setMimeType(ContentService.MimeType.JSON);
 }
 
 /**
@@ -200,6 +243,7 @@ function handleBackendAction(data) {
   const result = { success: false, message: '' };
   
   try {
+    // === GUARDAR PDF EN DRIVE ===
     if (data.action === 'SAVE_REPORT') {
       let folder;
       if (data.folderId) { try { folder = DriveApp.getFolderById(data.folderId); } catch(e) {} }
@@ -217,16 +261,15 @@ function handleBackendAction(data) {
       result.message = file.getUrl();
     } 
     
+    // === ENVIAR EMAIL ===
     else if (data.action === 'SEND_EMAIL') {
       const { to, subject, body } = data.emailData;
-      
       MailApp.sendEmail({
         to: to,
         subject: subject,
         htmlBody: body,
         name: "Organización Equitel - Crédito y Cartera"
       });
-      
       if (data.logData) {
         upsertRow({
           id: data.logData.clientId,
@@ -240,7 +283,7 @@ function handleBackendAction(data) {
       result.message = "Enviado correctamente";
     }
 
-    // NUEVA ACCIÓN: ACTUALIZAR SOLO EL SHEETS (Para el botón Aprobar/Negar)
+    // === ACTUALIZAR SHEET ===
     else if (data.action === 'UPDATE_SHEET') {
        if (data.logData) {
         upsertRow({
@@ -253,6 +296,100 @@ function handleBackendAction(data) {
       result.success = true;
       result.message = "Sheet actualizado";
     }
+
+    // === GUARDAR ESTADO COMPLETO (JSON) ===
+    else if (data.action === 'SAVE_STATE') {
+       const folderUrl = data.folderUrl;
+       const jsonData = data.jsonData; // Stringified JSON
+       let folder;
+       if (folderUrl) {
+          const idMatch = folderUrl.match(/[-\w]{25,}/);
+          if (idMatch) { try { folder = DriveApp.getFolderById(idMatch[0]); } catch(e) {} }
+       }
+       
+       if (folder) {
+          const fileName = "estefania_data.json";
+          const files = folder.getFilesByName(fileName);
+          if (files.hasNext()) {
+             // Update existing
+             const file = files.next();
+             file.setContent(jsonData);
+          } else {
+             // Create new
+             folder.createFile(fileName, jsonData, MimeType.PLAIN_TEXT);
+          }
+          result.success = true;
+          result.message = "Estado guardado en Drive";
+       } else {
+          throw new Error("Carpeta no encontrada para guardar estado");
+       }
+    }
+
+    // === LEER ESTADO COMPLETO (JSON) ===
+    else if (data.action === 'LOAD_STATE') {
+       const folderUrl = data.folderUrl;
+       let folder;
+       if (folderUrl) {
+          const idMatch = folderUrl.match(/[-\w]{25,}/);
+          if (idMatch) { try { folder = DriveApp.getFolderById(idMatch[0]); } catch(e) {} }
+       }
+
+       if (folder) {
+          const files = folder.getFilesByName("estefania_data.json");
+          if (files.hasNext()) {
+             const file = files.next();
+             result.jsonContent = file.getBlob().getDataAsString();
+             result.success = true;
+          } else {
+             result.success = false;
+             result.message = "No existe archivo de datos previos";
+          }
+       } else {
+          result.success = false;
+          result.message = "Carpeta inválida";
+       }
+    }
+
+    // === NUEVO: RECUPERAR ARCHIVOS PARA IA (Base64) ===
+    else if (data.action === 'FETCH_FILES_FOR_AI') {
+       const folderId = data.folderId;
+       const fetchedFiles = [];
+       if (folderId) {
+          try {
+             const folder = DriveApp.getFolderById(folderId);
+             const files = folder.getFiles();
+             while (files.hasNext()) {
+                const file = files.next();
+                const name = file.getName().toUpperCase();
+                const mimeType = file.getMimeType();
+                const size = file.getSize();
+
+                // Filtrar solo archivos clave para no exceder límites de memoria/tiempo
+                // ESTADOS, RENTA, BANCARIA, CAMARA, COMERCIAL
+                if (size < 6000000 && ( // Max 6MB per file
+                    name.includes("ESTADOS") || 
+                    name.includes("RENTA") || 
+                    name.includes("BANCARIA") ||
+                    name.includes("COMERCIAL")
+                )) {
+                   fetchedFiles.push({
+                      name: name,
+                      mimeType: mimeType,
+                      data: Utilities.base64Encode(file.getBlob().getBytes())
+                   });
+                }
+             }
+             result.success = true;
+             result.files = fetchedFiles;
+          } catch(e) {
+             result.success = false;
+             result.message = "Error leyendo archivos de Drive: " + e.toString();
+          }
+       } else {
+          result.success = false;
+          result.message = "No Folder ID provided";
+       }
+    }
     
   } catch (err) {
     result.error = err.toString();
@@ -261,7 +398,6 @@ function handleBackendAction(data) {
   return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
 }
 
-// ---- PLANTILLAS INTERNAS PREMIUM (CSS INLINED) ----
 function getActionButtonsHtml(linkDrive) {
   return `
     <div style="text-align: center; margin-top: 25px; margin-bottom: 25px;">

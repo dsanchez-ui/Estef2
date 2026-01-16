@@ -42,7 +42,7 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
   const [fileValidation, setFileValidation] = useState<{ [key: string]: { checking: boolean, valid: boolean | null, msg?: string } }>({});
 
   // Computed state to lock UI
-  const isLocked = Object.values(fileValidation).some(v => v.checking) || extractingId || uploading;
+  const isLocked = Object.values(fileValidation).some((v: any) => v.checking) || extractingId || uploading;
 
   const isBasicInfoValid = !!(form.razonSocial && form.nit && form.integrante);
 
@@ -56,7 +56,7 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
     if (!allFilesUploaded) return false;
 
     // Check if any validation failed (only if it has been checked and is invalid)
-    const anyValidationFailed = Object.values(fileValidation).some(v => v.valid === false);
+    const anyValidationFailed = Object.values(fileValidation).some((v: any) => v.valid === false);
     if (anyValidationFailed) return false;
 
     return true;
@@ -151,7 +151,7 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
         const isValid = val?.valid === true; 
         
         results.push({
-            fileName: names[key] || file.name,
+            fileName: names[key] || (file as File).name,
             isValid: isValid,
             issue: val?.msg
         });
@@ -272,14 +272,14 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
             2. Documentación Financiera y Legal
           </h3>
           <div className="grid grid-cols-4 gap-4 relative">
-            <FileDrop id="ef" label="EE.FF Auditados" file={files.estadosFinancieros} onSelect={f => handleFileSelect('estadosFinancieros', f)} validation={fileValidation.estadosFinancieros} disabled={isLocked} />
-            <FileDrop id="cc" label="Cámara Comercio" file={files.camara} onSelect={f => handleFileSelect('camara', f)} validation={fileValidation.camara} disabled={isLocked} />
-            <FileDrop id="ref" label="Ref. Comercial" file={files.referenciaComercial} onSelect={f => handleFileSelect('referenciaComercial', f)} validation={fileValidation.referenciaComercial} disabled={isLocked} />
-            <FileDrop id="cb" label="Cert. Bancaria" file={files.certificacionBancaria} onSelect={f => handleFileSelect('certificacionBancaria', f)} validation={fileValidation.certificacionBancaria} disabled={isLocked} />
-            <FileDrop id="renta" label="Decl. Renta" file={files.declaracionRenta} onSelect={f => handleFileSelect('declaracionRenta', f)} validation={fileValidation.declaracionRenta} disabled={isLocked} />
-            <FileDrop id="cedula" label="Cédula RL" file={files.cedulaRL} onSelect={f => handleFileSelect('cedulaRL', f)} validation={fileValidation.cedulaRL} disabled={isLocked} />
-            <FileDrop id="comp" label="Comp. Accionaria" file={files.composicion} onSelect={f => handleFileSelect('composicion', f)} validation={fileValidation.composicion} disabled={isLocked} />
-            <FileDrop id="ext" label="Extractos (Opcional)" file={files.extractos} onSelect={f => handleFileSelect('extractos', f)} optional={true} validation={fileValidation.extractos} disabled={isLocked} />
+            <FileDrop id="ef" label="EE.FF Auditados" file={files.estadosFinancieros} onSelect={(f: File) => handleFileSelect('estadosFinancieros', f)} validation={fileValidation.estadosFinancieros} disabled={isLocked} />
+            <FileDrop id="cc" label="Cámara Comercio" file={files.camara} onSelect={(f: File) => handleFileSelect('camara', f)} validation={fileValidation.camara} disabled={isLocked} />
+            <FileDrop id="ref" label="Ref. Comercial" file={files.referenciaComercial} onSelect={(f: File) => handleFileSelect('referenciaComercial', f)} validation={fileValidation.referenciaComercial} disabled={isLocked} />
+            <FileDrop id="cb" label="Cert. Bancaria" file={files.certificacionBancaria} onSelect={(f: File) => handleFileSelect('certificacionBancaria', f)} validation={fileValidation.certificacionBancaria} disabled={isLocked} />
+            <FileDrop id="renta" label="Decl. Renta" file={files.declaracionRenta} onSelect={(f: File) => handleFileSelect('declaracionRenta', f)} validation={fileValidation.declaracionRenta} disabled={isLocked} />
+            <FileDrop id="cedula" label="Cédula RL" file={files.cedulaRL} onSelect={(f: File) => handleFileSelect('cedulaRL', f)} validation={fileValidation.cedulaRL} disabled={isLocked} />
+            <FileDrop id="comp" label="Comp. Accionaria" file={files.composicion} onSelect={(f: File) => handleFileSelect('composicion', f)} validation={fileValidation.composicion} disabled={isLocked} />
+            <FileDrop id="ext" label="Extractos (Opcional)" file={files.extractos} onSelect={(f: File) => handleFileSelect('extractos', f)} optional={true} validation={fileValidation.extractos} disabled={isLocked} />
           </div>
         </div>
 
@@ -321,7 +321,7 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
 };
 
 // IMPROVED FileDrop with Status Indicators & Locking
-const FileDrop = ({ label, file, onSelect, icon, optional = false, validation, disabled }: any) => {
+const FileDrop = ({ label, file, onSelect, icon, optional = false, validation, disabled, id }: any) => {
   const isInvalid = validation?.valid === false;
   const isValid = validation?.valid === true;
   const isChecking = validation?.checking === true;
@@ -332,58 +332,69 @@ const FileDrop = ({ label, file, onSelect, icon, optional = false, validation, d
     }
   };
 
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (disabled || isChecking) return;
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        onSelect(e.dataTransfer.files[0]);
+    }
+  };
+
   return (
     <label 
-      htmlFor={label}
+      htmlFor={id}
       onClick={handleClick}
+      onDragOver={e => e.preventDefault()}
+      onDrop={handleDrop}
       className={`
-        border-2 border-dashed p-4 rounded-2xl text-center cursor-pointer transition-all relative overflow-hidden group h-36 flex flex-col items-center justify-center
-        ${isInvalid ? 'border-red-400 bg-red-50' : isValid ? 'border-green-500 bg-green-50' : file ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white'} 
-        ${!file && optional ? 'opacity-70' : ''}
-        ${disabled ? 'opacity-50 cursor-not-allowed grayscale' : 'hover:bg-slate-50'}
+        border-2 border-dashed rounded-xl p-4 flex flex-col items-center justify-center gap-3 transition-all cursor-pointer relative overflow-hidden group min-h-[140px]
+        ${disabled ? 'opacity-50 cursor-not-allowed bg-slate-50 border-slate-200' : ''}
+        ${isInvalid ? 'border-red-300 bg-red-50' : 
+          isValid ? 'border-green-300 bg-green-50' : 
+          file ? 'border-equitel-red bg-red-50/10' : 'border-slate-200 hover:border-equitel-red hover:bg-slate-50'}
       `}
     >
-      <input 
-        type="file" 
-        className="hidden" 
-        id={label} 
-        disabled={disabled || isChecking}
-        accept=".pdf,.png,.jpg,.jpeg" 
-        onChange={e => onSelect(e.target.files?.[0])} 
-      />
-      
-      {isChecking ? (
-         <div className="flex flex-col items-center gap-2 text-slate-500 absolute inset-0 bg-white/90 justify-center z-20 p-2">
-           <Loader2 className="animate-spin text-equitel-red" size={24} />
-           <span className="text-[8px] font-bold uppercase animate-pulse">Verificando...</span>
-           <p className="text-[7px] text-slate-400 leading-tight">Podría tardar varios segundos, no recargues la página</p>
-         </div>
-      ) : file ? (
-        <>
-          {isInvalid ? <XCircle className="text-red-500 mb-2" size={24} /> : 
-           isValid ? <CheckCircle className="text-green-500 mb-2" size={24} /> :
-           <FileText className="text-blue-500 mb-2" size={24} />
-          }
-          
-          <span className={`text-[9px] font-black uppercase truncate w-full px-2 ${isInvalid ? 'text-red-700' : 'text-slate-700'}`}>
-            {file.name}
-          </span>
-          
-          {validation?.msg && (
-             <span className="text-[8px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded mt-1 animate-pulse leading-tight">
-               {validation.msg}
-             </span>
-          )}
-        </>
-      ) : (
-        <>
-          {icon || <Upload className="text-slate-300 group-hover:text-equitel-red group-hover:scale-110 transition-all mb-2" size={24} />}
-          <span className="text-[9px] font-black uppercase text-slate-500 group-hover:text-slate-700">
-            {label}
-          </span>
-          {optional && <span className="text-[8px] text-slate-400 mt-1">(Opcional)</span>}
-        </>
-      )}
+        <input 
+            type="file" 
+            id={id} 
+            className="hidden" 
+            accept=".pdf,.png,.jpg,.jpeg"
+            onChange={e => e.target.files && onSelect(e.target.files[0])}
+            disabled={disabled || isChecking}
+        />
+
+        {isChecking ? (
+            <div className="absolute inset-0 bg-white/80 flex flex-col items-center justify-center z-10">
+                <Loader2 className="animate-spin text-equitel-red mb-2" />
+                <span className="text-[10px] font-bold text-equitel-red uppercase">Validando...</span>
+            </div>
+        ) : (
+            <>
+                {isValid && <div className="absolute top-2 right-2 text-green-500"><CheckCircle size={16} /></div>}
+                {isInvalid && <div className="absolute top-2 right-2 text-red-500"><XCircle size={16} /></div>}
+                
+                <div className={`p-3 rounded-full transition-colors ${file ? 'bg-white shadow-sm' : 'bg-slate-100 group-hover:bg-white group-hover:shadow-sm'}`}>
+                    {icon || (file ? <FileText size={24} className={isValid ? "text-green-600" : isInvalid ? "text-red-600" : "text-equitel-red"} /> : <CloudUpload size={24} className="text-slate-400" />)}
+                </div>
+
+                <div className="text-center">
+                    <p className={`text-[10px] font-black uppercase tracking-wide mb-1 ${file ? 'text-slate-900' : 'text-slate-400'}`}>
+                        {label} {optional && <span className="text-slate-300">(Opcional)</span>}
+                    </p>
+                    {file ? (
+                        <p className="text-[9px] font-medium text-slate-500 truncate max-w-[120px] mx-auto">{file.name}</p>
+                    ) : (
+                        <p className="text-[9px] text-slate-300 group-hover:text-slate-400">PDF o Imagen</p>
+                    )}
+                </div>
+                
+                {isInvalid && validation.msg && (
+                    <div className="absolute bottom-0 left-0 right-0 bg-red-100 p-1.5 text-center">
+                        <p className="text-[8px] font-bold text-red-600 truncate px-2" title={validation.msg}>{validation.msg}</p>
+                    </div>
+                )}
+            </>
+        )}
     </label>
   );
 };
