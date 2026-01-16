@@ -29,14 +29,14 @@ const PINModal: React.FC<PINModalProps> = ({ onSuccess, onCancel }) => {
           <Lock size={40} />
         </div>
         <h2 className="text-2xl font-black text-white mb-2 uppercase">Acceso Restringido</h2>
-        <p className="text-slate-500 text-sm mb-8">Director Nacional: Ingrese su PIN de seguridad.</p>
+        <p className="text-slate-500 text-sm mb-8">Director Nacional: Ingrese su PIN de seguridad (6 dígitos).</p>
         
         <form onSubmit={handleSubmit} className="space-y-6">
           <input 
             type="password" 
             autoFocus
-            maxLength={4}
-            className={`w-full text-center text-4xl tracking-[1em] py-4 bg-slate-800 border-2 rounded-2xl outline-none transition-all ${
+            maxLength={6}
+            className={`w-full text-center text-4xl tracking-[0.5em] py-4 bg-slate-800 border-2 rounded-2xl outline-none transition-all ${
               error ? 'border-red-500 text-red-500' : 'border-slate-700 text-white focus:border-equitel-red'
             }`}
             value={pin}

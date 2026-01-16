@@ -316,60 +316,68 @@ const App: React.FC = () => {
   // This just uses handleSelectAnalysis logic now
 
   const handleFinalDecision = async (id: string, action: 'APROBADO' | 'NEGADO', manualCupo?: number, manualPlazo?: number, reason?: string) => {
-    // 1. UPDATE LOCAL STATE
+    // CRITICAL FIX: Use selectedAnalysis (which holds the full AI data) as the base for the update.
+    // The 'analyses' array typically only holds shallow summary data from Sheets.
+    // If we only updated the array and saved that, we would lose 'aiResult', 'indicators', etc.
+    
+    if (!selectedAnalysis || selectedAnalysis.id !== id) {
+        alert("Error de sincronización: El análisis seleccionado no coincide. Por favor recargue.");
+        return;
+    }
+
+    // 1. Create the fully enriched object to save to Drive
+    const fullUpdatedAnalysis: CreditAnalysis = {
+        ...selectedAnalysis, // Keep all deep data (AI, flags, etc.)
+        status: action,
+        assignedCupo: manualCupo,
+        assignedPlazo: manualPlazo,
+        rejectionReason: reason
+    };
+
+    if (fullUpdatedAnalysis.cupo && manualPlazo) {
+        fullUpdatedAnalysis.cupo = { ...fullUpdatedAnalysis.cupo, plazoRecomendado: manualPlazo };
+    }
+
+    // 2. Update Local State (List View)
+    // We update the list with the summary info so the UI reflects the change immediately
     const updatedAnalyses = analyses.map(a => {
       if (a.id !== id) return a;
-      
-      const updated: CreditAnalysis = { 
-        ...a, 
-        status: action, 
-        assignedCupo: manualCupo,
-        assignedPlazo: manualPlazo, 
-        rejectionReason: reason 
+      return { 
+          ...a, 
+          status: action, 
+          assignedCupo: manualCupo, 
+          assignedPlazo: manualPlazo 
       };
-
-      if (updated.cupo && manualPlazo) {
-        updated.cupo = { ...updated.cupo, plazoRecomendado: manualPlazo };
-      }
-
-      return updated;
     });
 
     setAnalyses(updatedAnalyses);
+    setSelectedAnalysis(fullUpdatedAnalysis);
 
-    // Update selectedAnalysis so the DetailView re-renders with the new state immediately
-    const updatedSelected = updatedAnalyses.find(a => a.id === id);
-    if (updatedSelected) {
-        setSelectedAnalysis(updatedSelected);
-        // ** PERSIST FINAL JSON STATE **
-        if (updatedSelected.driveFolderUrl) {
-            saveAnalysisState(updatedSelected.driveFolderUrl, updatedSelected).catch(console.error);
+    // 3. PERSIST FULL JSON STATE (With AI Data)
+    if (fullUpdatedAnalysis.driveFolderUrl) {
+        // We don't await this to keep UI snappy, but it runs in background
+        saveAnalysisState(fullUpdatedAnalysis.driveFolderUrl, fullUpdatedAnalysis).catch(console.error);
+    }
+
+    // 4. IMMEDIATE SHEET UPDATE (Fire & Forget / Async)
+    let detalleLog = "";
+    if (action === 'APROBADO') {
+        detalleLog = `Cupo: ${formatCOP(manualCupo || 0)} - Plazo: ${manualPlazo || 30} días`;
+    } else {
+        detalleLog = "Solicitud Denegada";
+    }
+
+    exportToDriveAndNotify({
+        action: 'UPDATE_SHEET',
+        logData: {
+        clientId: id,
+        clientName: fullUpdatedAnalysis.clientName,
+        nit: fullUpdatedAnalysis.nit,
+        comercialName: fullUpdatedAnalysis.comercial.name,
+        detalle: detalleLog,
+        estado: action
         }
-    }
-
-    // 2. IMMEDIATE SHEET UPDATE (Fire & Forget / Async)
-    const analysis = updatedAnalyses.find(a => a.id === id);
-    if (analysis) {
-       let detalleLog = "";
-       if (action === 'APROBADO') {
-          detalleLog = `Cupo: ${formatCOP(manualCupo || 0)} - Plazo: ${manualPlazo || 30} días`;
-       } else {
-          detalleLog = "Solicitud Denegada";
-       }
-
-       // We don't await this to keep UI snappy, but we log errors
-       exportToDriveAndNotify({
-         action: 'UPDATE_SHEET',
-         logData: {
-           clientId: id,
-           clientName: analysis.clientName,
-           nit: analysis.nit,
-           comercialName: analysis.comercial.name,
-           detalle: detalleLog,
-           estado: action
-         }
-       }).catch(err => console.error("Failed to update sheet immediately:", err));
-    }
+    }).catch(err => console.error("Failed to update sheet immediately:", err));
   };
 
   if (!role) {
@@ -513,8 +521,6 @@ const App: React.FC = () => {
              <DirectorDashboard 
                analyses={analyses} 
                onSelect={handleSelectAnalysis}
-               notificationEmails={notificationEmails}
-               onUpdateEmails={setNotificationEmails}
              />
            )}
         </>

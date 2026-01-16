@@ -1,6 +1,6 @@
 
 const STORAGE_KEY = 'estefania_secure_vault';
-const DEFAULT_PIN = '4425';
+const DEFAULT_PIN = '442502';
 
 // Un "cifrado" simple para evitar lectura plana en localStorage
 // En producción se usaría un Hash real o autenticación de servidor
@@ -25,7 +25,8 @@ export const getStoredPIN = (): string => {
 };
 
 export const updateStoredPIN = (newPIN: string): boolean => {
-  if (newPIN.length !== 4 || isNaN(Number(newPIN))) return false;
+  // Updated validation for 6 digits
+  if (newPIN.length !== 6 || isNaN(Number(newPIN))) return false;
   localStorage.setItem(STORAGE_KEY, encrypt(newPIN));
   return true;
 };

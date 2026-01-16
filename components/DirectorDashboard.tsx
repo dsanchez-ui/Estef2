@@ -1,37 +1,47 @@
 
 import React, { useState } from 'react';
 import { CreditAnalysis } from '../types';
-import { Search, Plus, ChevronRight, Settings, Mail } from 'lucide-react';
-import { formatCOP } from '../utils/calculations';
+import { Settings, Lock, CheckCircle2, AlertCircle } from 'lucide-react';
+import { updateStoredPIN } from '../utils/security';
 
 interface DirectorDashboardProps {
   analyses: CreditAnalysis[];
   onSelect: (analysis: CreditAnalysis) => void;
-  // New props for config management
+  // Deprecated props removed, keeping interface clean or optional if needed elsewhere
   notificationEmails?: string;
   onUpdateEmails?: (emails: string) => void;
 }
 
 const DirectorDashboard: React.FC<DirectorDashboardProps> = ({ 
   analyses, 
-  onSelect,
-  notificationEmails = "", 
-  onUpdateEmails 
+  onSelect
 }) => {
   const [showSettings, setShowSettings] = useState(false);
-  // Local state for the input field to avoid excessive re-renders on App
-  const [localEmails, setLocalEmails] = useState(notificationEmails);
+  
+  // New PIN State
+  const [newPin, setNewPin] = useState('');
+  const [pinStatus, setPinStatus] = useState<{success: boolean, msg: string} | null>(null);
 
   // UPDATED FILTER: Include 'ANALIZADO' as it is waiting for Director decision
   const pending = analyses.filter(a => a.status === 'PENDIENTE_DIRECTOR' || a.status === 'ANALIZADO');
-  
   const history = analyses.filter(a => a.status !== 'PENDIENTE_DIRECTOR' && a.status !== 'ANALIZADO' && a.status !== 'PENDIENTE_CARTERA');
 
-  const handleSaveSettings = () => {
-    if (onUpdateEmails) {
-      onUpdateEmails(localEmails);
-      alert("Configuración guardada exitosamente.");
-      setShowSettings(false);
+  const handleChangePin = () => {
+    if (newPin.length !== 6) {
+        setPinStatus({ success: false, msg: "El PIN debe tener exactamente 6 dígitos." });
+        return;
+    }
+    
+    const success = updateStoredPIN(newPin);
+    if (success) {
+        setPinStatus({ success: true, msg: "PIN actualizado correctamente." });
+        setNewPin('');
+        setTimeout(() => {
+            setShowSettings(false);
+            setPinStatus(null);
+        }, 2000);
+    } else {
+        setPinStatus({ success: false, msg: "Error al guardar. Use solo números." });
     }
   };
 
@@ -51,25 +61,45 @@ const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
       </div>
 
       {showSettings && (
-        <div className="bg-slate-800 text-white p-6 rounded-3xl animate-in slide-in-from-top-4 shadow-xl">
-          <h3 className="font-bold text-sm uppercase mb-4 flex items-center gap-2">
-            <Mail size={16} /> Configuración de Notificaciones (Cartera)
+        <div className="bg-slate-900 text-white p-6 rounded-3xl animate-in slide-in-from-top-4 shadow-xl border border-slate-800">
+          <h3 className="font-bold text-sm uppercase mb-4 flex items-center gap-2 text-slate-200">
+            <Lock size={16} /> Seguridad: Cambiar PIN de Acceso
           </h3>
-          <div className="flex gap-4">
-            <input 
-              value={localEmails}
-              onChange={(e) => setLocalEmails(e.target.value)}
-              className="flex-1 bg-slate-700 border-none rounded-xl px-4 py-3 text-sm font-mono text-slate-300 focus:ring-1 focus:ring-equitel-red outline-none" 
-              placeholder="correo1@equitel.com, correo2@equitel.com"
-            />
+          <div className="flex flex-col md:flex-row gap-4 items-start md:items-center">
+            <div className="flex-1 w-full">
+                <input 
+                  type="password"
+                  value={newPin}
+                  onChange={(e) => {
+                      // Only allow numbers
+                      const val = e.target.value.replace(/\D/g, '');
+                      setNewPin(val);
+                      setPinStatus(null);
+                  }}
+                  maxLength={6}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-lg font-mono text-white focus:ring-2 focus:ring-equitel-red outline-none tracking-[0.5em] text-center placeholder:tracking-normal placeholder:text-sm" 
+                  placeholder="Nuevo PIN (6 dígitos)"
+                />
+            </div>
             <button 
-              onClick={handleSaveSettings}
-              className="px-6 py-2 bg-equitel-red rounded-xl font-bold text-xs uppercase hover:bg-red-700 transition-colors"
+              onClick={handleChangePin}
+              disabled={newPin.length !== 6}
+              className="w-full md:w-auto px-8 py-3 bg-equitel-red rounded-xl font-bold text-xs uppercase hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Guardar
+              Actualizar
             </button>
           </div>
-          <p className="text-[10px] text-slate-500 mt-2">Separe los correos con comas. Estos usuarios recibirán alerta cuando Comercial finalice una carga.</p>
+          
+          {pinStatus && (
+              <div className={`mt-4 p-3 rounded-xl flex items-center gap-2 text-xs font-bold ${pinStatus.success ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
+                  {pinStatus.success ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+                  {pinStatus.msg}
+              </div>
+          )}
+          
+          <p className="text-[10px] text-slate-500 mt-4 border-t border-slate-800 pt-2">
+             Nota: Este PIN se guarda localmente en este navegador. Si borra la caché, volverá al PIN por defecto (442502).
+          </p>
         </div>
       )}
 
@@ -96,7 +126,6 @@ const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
               {pending.map(a => (
                 <tr key={a.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => onSelect(a)}>
                   <td className="px-6 py-4">
-                    {/* UPDATED: Show ID explicitly */}
                     <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 text-[9px] font-black mb-1">
                       {a.id}
                     </span>
