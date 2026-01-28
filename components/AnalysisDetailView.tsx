@@ -7,7 +7,7 @@ import { generateWelcomeLetterHTML, generateRejectionEmailText, generateCreditRe
 import { 
   ArrowLeft, Printer, Sparkles, AlertTriangle, Loader2, DollarSign, 
   TrendingUp, ShieldAlert, Activity, Mail, Download, Copy, CheckCircle,
-  FileText, Send, ExternalLink, Cloud, Calendar
+  FileText, Send, ExternalLink, Cloud, Calendar, X
 } from 'lucide-react';
 
 interface AnalysisDetailViewProps {
@@ -28,6 +28,10 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
   
   const [showRiskConfirm, setShowRiskConfirm] = useState(false);
   
+  // REJECTION FLOW STATES
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+
   // States for Email/Drive Workflow
   // UPDATED: Initialize empty to avoid pre-filling with comercial's email
   const [emailTo, setEmailTo] = useState('');
@@ -36,6 +40,15 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
   const [autoGenerating, setAutoGenerating] = useState(false);
 
   const isHighRisk = analysis.cupo?.cupoLiberal ? manualCupo > analysis.cupo.cupoLiberal : false;
+
+  // Pre-fill rejection reason based on flags
+  useEffect(() => {
+    if (analysis.flags?.red && analysis.flags.red.length > 0) {
+        setRejectReason(`Inconsistencias financieras detectadas: ${analysis.flags.red.join(', ')}.`);
+    } else {
+        setRejectReason("Políticas internas de riesgo crediticio: Capacidad de endeudamiento excedida.");
+    }
+  }, [analysis]);
 
   const performApproval = async () => {
      setAutoGenerating(true);
@@ -81,15 +94,19 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
     }
   };
 
-  const handleReject = async () => {
-    if (!confirm("¿Está seguro de negar esta solicitud?")) return;
+  const handleConfirmReject = async () => {
+    // 1. Close Modal Immediately
+    setShowRejectModal(false);
     
+    // 2. Start Global Loading
     setAutoGenerating(true);
-    const reason = `Inconsistencias financieras detectadas: ${analysis.flags?.red.map(f => f).join(', ') || 'N/A'}.`;
     
     try {
         // Generate Report even if rejected (with 0 cupo)
-        const reportHtml = generateCreditReportHTML(analysis, 0, 0);
+        // We create a temp analysis object to ensure the reason is reflected if we were to include it in the PDF
+        const tempAnalysis = { ...analysis, rejectionReason: rejectReason };
+        const reportHtml = generateCreditReportHTML(tempAnalysis, 0, 0);
+        
         await exportToDriveAndNotify({
             action: 'SAVE_REPORT',
             folderId: analysis.driveFolderId, 
@@ -98,10 +115,14 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
             fileName: `Informe_Credito_RECHAZADO_${analysis.clientName}.pdf`
         });
         
-        onAction(analysis.id, 'NEGADO', 0, 0, reason);
+        // Finalize state which will trigger the UI update to show the email script
+        onAction(analysis.id, 'NEGADO', 0, 0, rejectReason);
     } catch (e) {
-        onAction(analysis.id, 'NEGADO', 0, 0, reason);
+        // Even if PDF fails, we must record the decision
+        console.error("Error saving rejection report", e);
+        onAction(analysis.id, 'NEGADO', 0, 0, rejectReason);
     } finally {
+        // Ensure loading state is cleared after everything is done
         setAutoGenerating(false);
     }
   };
@@ -123,6 +144,7 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
       detalleLog = `Cupo: ${formatCOP(analysis.assignedCupo || 0)} - Plazo: ${analysis.assignedPlazo} días`;
     } else {
       subject = `Respuesta Solicitud Crédito - ${analysis.clientName}`;
+      // Use the stored rejection reason
       body = generateRejectionEmailText(analysis).replace(/\n/g, '<br>');
       detalleLog = "Solicitud Denegada";
     }
@@ -198,9 +220,10 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
     <div className="space-y-8 max-w-7xl mx-auto pb-24 relative">
       
       {autoGenerating && (
-          <div className="fixed inset-0 bg-white/80 z-[300] flex flex-col items-center justify-center backdrop-blur-sm animate-in fade-in">
+          <div className="fixed inset-0 bg-white/90 z-[300] flex flex-col items-center justify-center backdrop-blur-sm animate-in fade-in">
              <Loader2 className="animate-spin text-equitel-red mb-4" size={48} />
              <h2 className="text-xl font-black uppercase text-slate-900">Generando documentos y finalizando...</h2>
+             <p className="text-slate-400 mt-2 font-medium">Por favor espere, no cierre la ventana.</p>
           </div>
       )}
 
@@ -224,7 +247,7 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
         
         {userRole === UserRole.DIRECTOR && (analysis.status === 'PENDIENTE_DIRECTOR' || analysis.status === 'ANALIZADO') && (
           <div className="flex gap-4">
-            <button onClick={handleReject} className="px-6 py-3 border-2 border-slate-200 text-slate-600 rounded-2xl font-black hover:bg-slate-50 transition-colors uppercase text-xs tracking-widest">
+            <button onClick={() => setShowRejectModal(true)} className="px-6 py-3 border-2 border-red-100 text-red-600 bg-red-50 rounded-2xl font-black hover:bg-red-100 transition-colors uppercase text-xs tracking-widest">
               Negar Solicitud
             </button>
             <button onClick={handleApproveClick} className="px-8 py-3 bg-equitel-red text-white rounded-2xl font-black shadow-xl hover:bg-red-700 transition-colors uppercase text-xs tracking-widest">
@@ -345,7 +368,7 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                      </div>
                      <textarea 
                         readOnly
-                        className="w-full h-48 bg-slate-50 p-4 rounded-xl text-sm text-slate-900 border-none resize-none font-mono"
+                        className="w-full h-48 bg-slate-50 p-4 rounded-xl text-sm text-slate-900 border-none resize-none font-mono focus:ring-2 focus:ring-red-200 outline-none"
                         value={generateRejectionEmailText(analysis)}
                      />
                      
@@ -388,7 +411,10 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                 <TrendingUp className="text-equitel-red" />
                 Resumen de Indicadores Financieros
               </h3>
-              <FinancialIndicatorsTable indicators={analysis.indicators} />
+              <FinancialIndicatorsTable 
+                indicators={analysis.indicators} 
+                interpretations={analysis.aiResult?.financialIndicatorInterpretations}
+              />
             </div>
           )}
 
@@ -402,7 +428,8 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
             </div>
           )}
 
-          {userRole === UserRole.DIRECTOR && (analysis.status === 'PENDIENTE_DIRECTOR' || analysis.status === 'ANALIZADO') && (
+          {/* UPDATED: ALWAYS VISIBLE FOR DIRECTOR, REGARDLESS OF STATUS */}
+          {userRole === UserRole.DIRECTOR && (
             <div className="bg-indigo-50 rounded-[2.5rem] p-8 border border-indigo-100">
               <div className="flex items-center gap-3 mb-4">
                 <Sparkles className="text-indigo-600" />
@@ -447,7 +474,8 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                  </div>
               ) : analysis.status === 'NEGADO' ? (
                  <div className="p-6 rounded-3xl border-2 border-red-500 bg-red-50">
-                    <p className="text-xl font-black text-red-700 uppercase">Solicitud Rechazada</p>
+                    <p className="text-xl font-black text-red-700 uppercase text-center">Solicitud Rechazada</p>
+                    <p className="text-xs text-red-800 text-center mt-2 font-medium">Notificación enviada a Cartera.</p>
                  </div>
               ) : (
                 <>
@@ -550,6 +578,49 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
         </div>
       )}
 
+      {showRejectModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+          <div className="max-w-lg w-full bg-white rounded-[2.5rem] p-8 shadow-2xl animate-in zoom-in duration-300 relative">
+            <button 
+                onClick={() => setShowRejectModal(false)}
+                className="absolute top-6 right-6 text-slate-400 hover:text-slate-800"
+            >
+                <X size={24} />
+            </button>
+            
+            <div className="w-16 h-16 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mb-6">
+              <ShieldAlert size={32} />
+            </div>
+            
+            <h3 className="text-2xl font-black uppercase mb-2 text-slate-900">Negar Solicitud</h3>
+            <p className="text-slate-500 text-sm mb-6">Por favor edite el motivo de rechazo. Este texto se usará en la comunicación formal.</p>
+            
+            <textarea 
+                className="w-full h-40 bg-slate-50 border border-slate-200 rounded-2xl p-4 text-sm font-medium text-slate-800 focus:ring-2 focus:ring-equitel-red outline-none resize-none mb-6"
+                placeholder="Escriba el motivo del rechazo..."
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+            />
+            
+            <div className="flex gap-4">
+              <button 
+                onClick={() => setShowRejectModal(false)} 
+                className="flex-1 py-4 font-bold text-slate-400 hover:text-slate-600 transition-colors uppercase text-xs tracking-widest"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={handleConfirmReject} 
+                disabled={!rejectReason.trim()}
+                className="flex-1 py-4 bg-red-600 text-white rounded-2xl font-black hover:bg-red-700 transition-colors uppercase text-xs tracking-widest shadow-lg shadow-red-200 disabled:opacity-50"
+              >
+                Confirmar Negación
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {(showReport || showWelcomeLetter) && (
         <div id="printable-report-container" className="fixed inset-0 bg-white z-[200] overflow-y-auto">
           <div className="min-h-screen bg-slate-100 flex flex-col items-center pt-8 pb-8">
@@ -583,43 +654,67 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
   );
 };
 
-const FinancialIndicatorsTable = ({ indicators, compact = false }: { indicators: FinancialIndicators, compact?: boolean }) => {
+const FinancialIndicatorsTable = ({ indicators, interpretations, compact = false }: { indicators: FinancialIndicators, interpretations?: {[key: string]: string}, compact?: boolean }) => {
   const rowClass = compact ? "py-2 px-4" : "py-3 px-6";
   const textClass = compact ? "text-xs" : "text-sm";
   
+  // Custom formatters for specific percent fields that AI now returns as 0-100 integers
+  const formatPctVal = (val: number) => `${val.toFixed(2)}%`;
+
   const categories = [
     {
       title: "Liquidez",
+      interpKey: "liquidez",
       items: [
         { label: "Razón Corriente", value: indicators.razonCorriente.toFixed(2) },
         { label: "Prueba Ácida", value: indicators.pruebaAcida.toFixed(2) },
         { label: "KNT (Capital de Trabajo)", value: formatCOP(indicators.knt) },
+        { label: "Riesgo Insolvencia (Inv. Liquidez)", value: indicators.riesgoInsolvencia.toFixed(2) },
       ]
     },
     {
       title: "Endeudamiento",
+      interpKey: "endeudamiento",
       items: [
-        { label: "Nivel Endeudamiento Global", value: formatPercent(indicators.endeudamientoGlobal) },
-        { label: "Endeudamiento Corto Plazo", value: formatPercent(indicators.endeudamientoCP) },
-        { label: "Solvencia (Pasivo/Patrimonio)", value: formatPercent(indicators.solvencia) },
+        { label: "Nivel Endeudamiento Global", value: formatPctVal(indicators.endeudamientoGlobal) },
+        { label: "Endeudamiento Corto Plazo", value: formatPctVal(indicators.endeudamientoCP) },
+        { label: "Endeudamiento Largo Plazo", value: formatPctVal(indicators.endeudamientoLP) },
+        { label: "Solvencia (Pasivo/Patrimonio)", value: formatPctVal(indicators.solvencia) },
+        { label: "Apalancamiento Financiero", value: indicators.apalancamientoFinanciero?.toFixed(2) || "N/A" },
+        { label: "Carga Financiera", value: formatPctVal(indicators.cargaFinanciera || 0) },
       ]
     },
     {
       title: "Rentabilidad & Márgenes",
+      interpKey: "rentabilidad",
       items: [
-        { label: "ROA (Activo)", value: formatPercent(indicators.roa) },
-        { label: "ROE (Patrimonio)", value: formatPercent(indicators.roe) },
-        { label: "Margen Operacional", value: formatPercent(indicators.margenOperacional) },
-        { label: "Margen Neto", value: formatPercent(indicators.margenNeto) },
+        { label: "Margen Bruto", value: formatPctVal(indicators.margenBruto || 0) },
+        { label: "Margen Operacional", value: formatPctVal(indicators.margenOperacional) },
+        { label: "Margen Neto", value: formatPctVal(indicators.margenNeto) },
+        { label: "Margen Contribución", value: formatPctVal(indicators.margenContribucion || 0) },
+        { label: "ROA (Activo)", value: formatPctVal(indicators.roa) },
+        { label: "ROE (Patrimonio)", value: formatPctVal(indicators.roe) },
       ]
     },
     {
       title: "Operación & Eficiencia",
+      interpKey: "operacion",
       items: [
+        { label: "EBIT", value: formatCOP(indicators.ebit || 0) },
         { label: "EBITDA", value: formatCOP(indicators.ebitda) },
+        { label: "Punto de Equilibrio (Est.)", value: formatCOP(indicators.puntoEquilibrio || 0) },
+        { label: "Rotación Activos", value: indicators.rotacionActivos?.toFixed(2) || "N/A" },
         { label: "Días Recuperación Cartera", value: `${indicators.diasCartera.toFixed(0)} días` },
         { label: "Días Rotación Inventario", value: `${indicators.diasInventario.toFixed(0)} días` },
         { label: "Ciclo Operacional", value: `${indicators.cicloOperacional.toFixed(0)} días` },
+      ]
+    },
+    {
+      title: "Riesgo",
+      interpKey: "zAltman",
+      items: [
+         { label: "Z-Altman Score", value: indicators.zAltman?.toFixed(2) || "N/A" },
+         { label: "Deterioro Patrimonial", value: indicators.deterioroPatrimonial ? "SÍ (ALERTA)" : "NO" }
       ]
     }
   ];
@@ -631,7 +726,8 @@ const FinancialIndicatorsTable = ({ indicators, compact = false }: { indicators:
           <tr>
             <th className={rowClass}>Categoría</th>
             <th className={rowClass}>Indicador</th>
-            <th className={`${rowClass} text-right`}>Resultado</th>
+            <th className={`${rowClass} text-right`}>Resultado (2024)</th>
+            <th className={`${rowClass} text-right`}>Interpretación</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -646,6 +742,11 @@ const FinancialIndicatorsTable = ({ indicators, compact = false }: { indicators:
                   )}
                   <td className={`${rowClass} ${textClass} font-medium text-slate-700`}>{item.label}</td>
                   <td className={`${rowClass} ${textClass} font-bold text-slate-900 text-right`}>{item.value}</td>
+                  {itemIdx === 0 && (
+                     <td rowSpan={cat.items.length} className={`${rowClass} ${textClass} text-slate-500 text-right align-top italic`}>
+                        {interpretations?.[cat.interpKey] || "-"}
+                     </td>
+                  )}
                 </tr>
               ))}
             </React.Fragment>

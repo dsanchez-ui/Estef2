@@ -1,12 +1,12 @@
 
 import React, { useState } from 'react';
 import { CreditAnalysis, CommercialMember, DocumentValidation } from '../types';
-import { INTEGRANTES_COMERCIALES } from '../constants';
 import { 
-  Upload, Loader2, Send, AlertCircle, CheckCircle, Sparkles, XCircle, Search, CloudUpload, ShieldAlert, Lock, FileText
+  Upload, Loader2, Send, AlertCircle, CheckCircle, Sparkles, XCircle, CloudUpload, Lock, FileText, User, Mail, ShieldAlert, Building2, Briefcase
 } from 'lucide-react';
 import { extractIdentityFromRUT, validateSingleDocument } from '../services/gemini';
 import PINModal from './PINModal';
+import { EQUITEL_COMPANIES, BUSINESS_UNITS } from '../constants';
 
 interface NewAnalysisFlowProps {
   onComplete: (analysis: CreditAnalysis) => Promise<void>; 
@@ -19,14 +19,19 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
   const [uploading, setUploading] = useState(false);
   const [showOverridePin, setShowOverridePin] = useState(false);
 
+  // Form State
   const [form, setForm] = useState({
     razonSocial: '',
     nit: '',
-    integrante: null as CommercialMember | null
+    asesorNombre: '',
+    asesorEmail: '',
+    empresa: '',        
+    unidadNegocio: ''   
   });
 
   // Individual file states
   const [files, setFiles] = useState<{ [key: string]: File | null }>({
+    debidaDiligencia: null, 
     estadosFinancieros: null,
     camara: null,
     referenciaComercial: null,
@@ -44,14 +49,25 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
   // Computed state to lock UI
   const isLocked = Object.values(fileValidation).some((v: any) => v.checking) || extractingId || uploading;
 
-  const isBasicInfoValid = !!(form.razonSocial && form.nit && form.integrante);
+  // Validate Email Domain
+  const isEmailValid = form.asesorEmail.toLowerCase().endsWith('@equitel.com.co');
+  
+  const isBasicInfoValid = !!(
+      form.razonSocial && 
+      form.nit && 
+      form.asesorNombre && 
+      form.asesorEmail && 
+      isEmailValid &&
+      form.empresa &&        
+      form.unidadNegocio     
+  );
 
   const isFormValid = React.useMemo(() => {
     // Basic form check
     if (!isBasicInfoValid) return false;
     
     // Check required files presence
-    const requiredKeys = ['estadosFinancieros', 'camara', 'referenciaComercial', 'certificacionBancaria', 'rut', 'cedulaRL', 'composicion'];
+    const requiredKeys = ['debidaDiligencia', 'estadosFinancieros', 'camara', 'referenciaComercial', 'certificacionBancaria', 'rut', 'cedulaRL', 'composicion'];
     const allFilesUploaded = requiredKeys.every(k => files[k] !== null);
     if (!allFilesUploaded) return false;
 
@@ -99,7 +115,8 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
     try {
         // Map UI key to expected Type
         let expectedType: any = 'OTRO';
-        if (key === 'camara') expectedType = 'CAMARA';
+        if (key === 'debidaDiligencia') expectedType = 'DEBIDA_DILIGENCIA'; // New Type
+        else if (key === 'camara') expectedType = 'CAMARA';
         else if (key === 'certificacionBancaria') expectedType = 'BANCARIA';
         else if (key === 'referenciaComercial') expectedType = 'REFERENCIA';
         else if (key === 'estadosFinancieros') expectedType = 'FINANCIEROS';
@@ -108,7 +125,9 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
         else if (key === 'composicion') expectedType = 'COMPOSICION';
 
         // Call Optimized Single Document Validator
-        const result = await validateSingleDocument(file, expectedType);
+        const context = (key === 'debidaDiligencia') ? { name: form.razonSocial, nit: form.nit } : undefined;
+        
+        const result = await validateSingleDocument(file, expectedType, context);
         
         setFileValidation(prev => ({ 
             ...prev, 
@@ -123,9 +142,10 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
     }
   };
 
-  const handleUpload = async () => {
+  // UPDATED: Accepts isOverride parameter to bypass checks and set summary correctly
+  const handleUpload = async (isOverride: boolean = false) => {
     if (!isBasicInfoValid) {
-        setErrorMsg("Por favor complete la información del cliente y seleccione un asesor.");
+        setErrorMsg("Por favor complete toda la información requerida, incluyendo Empresa y Unidad de Negocio.");
         return;
     }
 
@@ -134,6 +154,7 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
     // Build Validation Results Payload for Email
     const results: DocumentValidation[] = [];
     const names: Record<string, string> = {
+        debidaDiligencia: 'Formato Debida Diligencia',
         estadosFinancieros: 'Estados Financieros',
         camara: 'Cámara de Comercio',
         referenciaComercial: 'Referencia Comercial',
@@ -157,11 +178,19 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
         });
     });
     
+    // Construct the CommercialMember object dynamically
+    const comercialMember: CommercialMember = {
+        name: form.asesorNombre.toUpperCase(),
+        email: form.asesorEmail.toLowerCase().trim()
+    };
+
     const newAnalysis: CreditAnalysis = {
       id: `SOL-PENDING`, 
       clientName: form.razonSocial,
       nit: form.nit,
-      comercial: form.integrante!,
+      comercial: comercialMember,
+      empresa: form.empresa, 
+      unidadNegocio: form.unidadNegocio, 
       date: new Date().toLocaleDateString(),
       status: 'PENDIENTE_CARTERA',
       commercialFiles: files,
@@ -169,7 +198,7 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
       validationResult: {
           overallValid: results.every(r => r.isValid),
           results: results,
-          summary: showOverridePin ? "Carga autorizada con excepción de Director." : "Validación estándar exitosa."
+          summary: isOverride ? "⚠️ Carga autorizada con excepción de Director." : "Validación estándar exitosa."
       }
     };
 
@@ -210,9 +239,9 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
         )}
 
         {/* Identity Section */}
-        <div className="grid grid-cols-2 gap-6">
-            <div className="col-span-2">
-              <p className="text-xs font-bold text-slate-400 uppercase mb-3">1. Identificación Automática</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="col-span-1 md:col-span-2">
+              <p className="text-xs font-bold text-slate-400 uppercase mb-3">1. Identificación Automática (Cliente)</p>
               <FileDrop 
                 id="rut" 
                 label="Cargar RUT (Autofill)" 
@@ -251,18 +280,82 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
             </div>
         </div>
 
-        <div className="relative">
-          <label className="text-[10px] font-bold text-slate-400 uppercase ml-2 mb-1 block">Asesor Responsable</label>
-          <select 
-            className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold appearance-none text-slate-900 focus:ring-2 focus:ring-equitel-red outline-none"
-            required
-            onChange={e => setForm({...form, integrante: INTEGRANTES_COMERCIALES.find(i => i.email === e.target.value) || null})}
-            value={form.integrante?.email || ""}
-            disabled={isLocked}
-          >
-            <option value="" className="text-slate-400">Seleccionar Integrante Comercial</option>
-            {INTEGRANTES_COMERCIALES.map(i => <option key={i.email} value={i.email} className="text-slate-900">{i.name}</option>)}
-          </select>
+        {/* Commercial Advisor & Business Unit Section */}
+        <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
+            <p className="text-xs font-bold text-slate-400 uppercase mb-4 flex items-center gap-2">
+               <User size={14}/> Datos del Solicitante
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Asesor Info */}
+                <div>
+                   <label className="text-[10px] font-bold text-slate-400 uppercase ml-2 mb-1 block">Nombre Asesor</label>
+                   <div className="relative">
+                       <input 
+                         type="text"
+                         className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-900 focus:ring-2 focus:ring-equitel-red outline-none"
+                         placeholder="Ej: JUAN PEREZ"
+                         value={form.asesorNombre}
+                         onChange={e => setForm({...form, asesorNombre: e.target.value})}
+                         disabled={isLocked}
+                       />
+                       <User className="absolute right-4 top-4 text-slate-300" size={18} />
+                   </div>
+                </div>
+                <div>
+                   <label className="text-[10px] font-bold text-slate-400 uppercase ml-2 mb-1 block">Correo Corporativo</label>
+                   <div className="relative">
+                       <input 
+                         type="email"
+                         className={`w-full p-4 bg-white border rounded-2xl font-bold text-slate-900 focus:ring-2 outline-none ${
+                             form.asesorEmail && !isEmailValid ? 'border-red-300 focus:ring-red-500' : 'border-slate-200 focus:ring-equitel-red'
+                         }`}
+                         placeholder="usuario@equitel.com.co"
+                         value={form.asesorEmail}
+                         onChange={e => setForm({...form, asesorEmail: e.target.value})}
+                         disabled={isLocked}
+                       />
+                       <Mail className="absolute right-4 top-4 text-slate-300" size={18} />
+                   </div>
+                   {form.asesorEmail && !isEmailValid && (
+                       <p className="text-[9px] text-red-500 font-bold mt-1 ml-2">Debe ser un correo @equitel.com.co</p>
+                   )}
+                </div>
+
+                {/* Company & Business Unit Dropdowns (NEW) */}
+                <div className="col-span-1">
+                   <label className="text-[10px] font-bold text-slate-400 uppercase ml-2 mb-1 block">Empresa Equitel</label>
+                   <div className="relative">
+                       <select 
+                         className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-900 focus:ring-2 focus:ring-equitel-red outline-none appearance-none"
+                         value={form.empresa}
+                         onChange={e => setForm({...form, empresa: e.target.value})}
+                         disabled={isLocked}
+                       >
+                         <option value="">Seleccionar Empresa...</option>
+                         {EQUITEL_COMPANIES.map(c => <option key={c} value={c}>{c}</option>)}
+                       </select>
+                       <Building2 className="absolute right-4 top-4 text-slate-300 pointer-events-none" size={18} />
+                   </div>
+                </div>
+                <div className="col-span-1">
+                   <label className="text-[10px] font-bold text-slate-400 uppercase ml-2 mb-1 block">Unidad de Negocio</label>
+                   <div className="relative">
+                       <select 
+                         className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-900 focus:ring-2 focus:ring-equitel-red outline-none appearance-none"
+                         value={form.unidadNegocio}
+                         onChange={e => setForm({...form, unidadNegocio: e.target.value})}
+                         disabled={isLocked}
+                       >
+                         <option value="">Seleccionar Unidad...</option>
+                         {BUSINESS_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                       </select>
+                       <Briefcase className="absolute right-4 top-4 text-slate-300 pointer-events-none" size={18} />
+                   </div>
+                </div>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-3 ml-2 italic">
+               * Todos los campos son obligatorios para la gestión documental.
+            </p>
         </div>
 
         {/* Docs Section */}
@@ -271,6 +364,24 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
             <CloudUpload size={14}/> 
             2. Documentación Financiera y Legal
           </h3>
+          
+          <div className="mb-4">
+             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                <FileDrop 
+                    id="dd" 
+                    label="0. Formato Debida Diligencia (Sarlaft)" 
+                    file={files.debidaDiligencia} 
+                    onSelect={(f: File) => handleFileSelect('debidaDiligencia', f)} 
+                    validation={fileValidation.debidaDiligencia} 
+                    disabled={isLocked || !form.nit} 
+                    icon={<ShieldAlert className={files.debidaDiligencia ? "text-amber-600" : "text-amber-400"} size={28} />}
+                />
+                <p className="text-[9px] text-amber-700 font-medium text-center mt-2">
+                   * Obligatorio. Se validará firma e identidad contra el RUT/Datos ingresados.
+                </p>
+             </div>
+          </div>
+
           <div className="grid grid-cols-4 gap-4 relative">
             <FileDrop id="ef" label="EE.FF Auditados" file={files.estadosFinancieros} onSelect={(f: File) => handleFileSelect('estadosFinancieros', f)} validation={fileValidation.estadosFinancieros} disabled={isLocked} />
             <FileDrop id="cc" label="Cámara Comercio" file={files.camara} onSelect={(f: File) => handleFileSelect('camara', f)} validation={fileValidation.camara} disabled={isLocked} />
@@ -287,7 +398,7 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
         <div className="pt-8 border-t flex flex-col gap-4">
              <button 
                type="button"
-               onClick={handleUpload}
+               onClick={() => handleUpload(false)}
                disabled={uploading || !isBasicInfoValid || isLocked || (!isFormValid && !showOverridePin)} 
                className="w-full py-5 bg-equitel-red text-white rounded-2xl font-black hover:bg-red-700 disabled:bg-slate-200 disabled:text-slate-400 transition-all uppercase text-xs flex items-center justify-center gap-2 shadow-xl shadow-red-100 tracking-widest z-10"
              >
@@ -310,8 +421,9 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
       {showOverridePin && (
         <PINModal 
           onSuccess={() => {
-            setShowOverridePin(false); // Validated pin, but we keep state to allow upload
-            handleUpload(); 
+            setShowOverridePin(false);
+            // TRIGGER UPLOAD WITH OVERRIDE FLAG TRUE
+            handleUpload(true); 
           }} 
           onCancel={() => setShowOverridePin(false)} 
         />

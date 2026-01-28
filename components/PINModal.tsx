@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
-import { Lock } from 'lucide-react';
-import { getStoredPIN } from '../utils/security';
+import { Lock, Loader2, AlertCircle } from 'lucide-react';
+import { verifyRemotePIN } from '../services/server';
 
 interface PINModalProps {
   onSuccess: () => void;
@@ -11,14 +11,28 @@ interface PINModalProps {
 const PINModal: React.FC<PINModalProps> = ({ onSuccess, onCancel }) => {
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (pin === getStoredPIN()) {
-      onSuccess();
-    } else {
-      setError(true);
-      setPin('');
+    if (pin.length !== 6) return;
+
+    setLoading(true);
+    setError(false);
+    
+    try {
+        const isValid = await verifyRemotePIN(pin);
+        if (isValid) {
+            onSuccess();
+        } else {
+            setError(true);
+            setPin('');
+        }
+    } catch (e) {
+        setError(true);
+        console.error("PIN Check failed", e);
+    } finally {
+        setLoading(false);
     }
   };
 
@@ -36,6 +50,7 @@ const PINModal: React.FC<PINModalProps> = ({ onSuccess, onCancel }) => {
             type="password" 
             autoFocus
             maxLength={6}
+            disabled={loading}
             className={`w-full text-center text-4xl tracking-[0.5em] py-4 bg-slate-800 border-2 rounded-2xl outline-none transition-all ${
               error ? 'border-red-500 text-red-500' : 'border-slate-700 text-white focus:border-equitel-red'
             }`}
@@ -45,9 +60,18 @@ const PINModal: React.FC<PINModalProps> = ({ onSuccess, onCancel }) => {
               setPin(e.target.value);
             }}
           />
+          {error && <p className="text-red-500 text-xs font-bold flex items-center justify-center gap-2"><AlertCircle size={12}/> PIN Incorrecto</p>}
+          
           <div className="flex gap-4">
-            <button type="button" onClick={onCancel} className="flex-1 py-4 text-slate-400 font-bold">CANCELAR</button>
-            <button type="submit" className="flex-1 py-4 bg-equitel-red text-white rounded-2xl font-bold">VERIFICAR</button>
+            <button type="button" onClick={onCancel} className="flex-1 py-4 text-slate-400 font-bold hover:text-white transition-colors" disabled={loading}>CANCELAR</button>
+            <button 
+              type="submit" 
+              className="flex-1 py-4 bg-equitel-red text-white rounded-2xl font-bold hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
+              disabled={loading}
+            >
+              {loading && <Loader2 className="animate-spin" size={18} />}
+              {loading ? "VERIFICANDO..." : "VERIFICAR"}
+            </button>
           </div>
         </form>
       </div>

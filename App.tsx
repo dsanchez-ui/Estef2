@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { UserRole, CreditAnalysis } from './types';
 import RoleSelector from './components/RoleSelector';
 import Layout from './components/Layout';
@@ -11,7 +11,7 @@ import PINModal from './components/PINModal';
 import SuccessView from './components/SuccessView';
 import { runFullCreditAnalysis } from './services/gemini';
 import { sendEmail } from './services/email';
-import { saveAnalysisToCloud, exportToDriveAndNotify, getAnalysesFromCloud, saveAnalysisState, loadAnalysisState, fetchProjectFiles } from './services/server'; // Updated imports
+import { saveAnalysisToCloud, exportToDriveAndNotify, getAnalysesFromCloud, saveAnalysisState, loadAnalysisState, fetchProjectFiles, StaleDataError } from './services/server'; // Updated imports
 import { fileToBase64, redondearComercial, formatCOP } from './utils/calculations';
 import CommercialDashboard from './components/CommercialDashboard';
 import { FileText, CheckCircle2, XCircle, Clock, AlertCircle, RefreshCw } from 'lucide-react';
@@ -45,8 +45,18 @@ const App: React.FC = () => {
   const [notificationEmails, setNotificationEmails] = useState("dsanchez@equitel.com.co");
 
   // --- PERSISTENCE LOGIC START ---
-  const hydrateData = async () => {
-    setIsSyncing(true);
+  // Silent refresh interval
+  useEffect(() => {
+    if (view === 'LIST') {
+        const interval = setInterval(() => {
+            hydrateData(true); // silent
+        }, 15000); // 15 seconds polling
+        return () => clearInterval(interval);
+    }
+  }, [view]);
+
+  const hydrateData = async (silent = false) => {
+    if (!silent) setIsSyncing(true);
     try {
       const rawData = await getAnalysesFromCloud();
       
@@ -76,15 +86,22 @@ const App: React.FC = () => {
           commercialFiles: {}, 
           riskFiles: {},
           assignedCupo,
-          assignedPlazo
+          assignedPlazo,
+          lastUpdated: row.lastUpdated // Concurrency Timestamp
         } as CreditAnalysis;
       });
 
-      setAnalyses(mappedAnalyses);
+      // Avoid UI jitter: Only update if length differs or deeply changed (simplified check here)
+      setAnalyses(prev => {
+         // Simple length check or ID check implies change
+         // For production, a deep compare is better, but here we just replace to ensure freshness
+         return mappedAnalyses;
+      });
+
     } catch (e) {
       console.error("Error hydrating data", e);
     } finally {
-      setIsSyncing(false);
+      if (!silent) setIsSyncing(false);
     }
   };
 
@@ -107,7 +124,8 @@ const App: React.FC = () => {
                   const merged = { 
                       ...fullData,
                       status: basicAnalysis.status, // Trust Sheet status
-                      id: basicAnalysis.id // Trust Sheet ID
+                      id: basicAnalysis.id, // Trust Sheet ID
+                      lastUpdated: basicAnalysis.lastUpdated // Keep latest timestamp for locking
                   };
                   setSelectedAnalysis(merged);
               } else {
@@ -164,7 +182,8 @@ const App: React.FC = () => {
           comercialNombre: newAnalysis.comercial.name,
           comercialEmail: newAnalysis.comercial.email,
           fecha: newAnalysis.date,
-          estado: newAnalysis.status
+          estado: newAnalysis.status,
+          lastUpdated: newAnalysis.lastUpdated // Versioning
         },
         archivos: cleanFilesToUpload,
         validation: newAnalysis.validationResult
@@ -286,7 +305,8 @@ const App: React.FC = () => {
                 id: updated.id,
                 clientName: updated.clientName, 
                 nit: updated.nit,
-                estado: 'PENDIENTE_DIRECTOR' // Email says "Ready for Director"
+                estado: 'PENDIENTE_DIRECTOR', // Email says "Ready for Director"
+                lastUpdated: updated.lastUpdated // Version Check
             },
             archivos: cleanFilesToUpload
         };
@@ -305,8 +325,14 @@ const App: React.FC = () => {
         setView('SUCCESS');
 
     } catch (error: any) {
-        alert("Error en proceso Cartera: " + error.message);
-        console.error(error);
+        if (error.name === 'StaleDataError') {
+            alert("⚠️ BLOQUEO DE SEGURIDAD: Otro usuario ha modificado este registro mientras usted trabajaba en él. La página se actualizará para mostrar los datos más recientes.");
+            setView('LIST');
+            hydrateData();
+        } else {
+            alert("Error en proceso Cartera: " + error.message);
+            console.error(error);
+        }
     } finally {
         setGlobalLoading(false);
     }
@@ -317,8 +343,6 @@ const App: React.FC = () => {
 
   const handleFinalDecision = async (id: string, action: 'APROBADO' | 'NEGADO', manualCupo?: number, manualPlazo?: number, reason?: string) => {
     // CRITICAL FIX: Use selectedAnalysis (which holds the full AI data) as the base for the update.
-    // The 'analyses' array typically only holds shallow summary data from Sheets.
-    // If we only updated the array and saved that, we would lose 'aiResult', 'indicators', etc.
     
     if (!selectedAnalysis || selectedAnalysis.id !== id) {
         alert("Error de sincronización: El análisis seleccionado no coincide. Por favor recargue.");
@@ -338,28 +362,7 @@ const App: React.FC = () => {
         fullUpdatedAnalysis.cupo = { ...fullUpdatedAnalysis.cupo, plazoRecomendado: manualPlazo };
     }
 
-    // 2. Update Local State (List View)
-    // We update the list with the summary info so the UI reflects the change immediately
-    const updatedAnalyses = analyses.map(a => {
-      if (a.id !== id) return a;
-      return { 
-          ...a, 
-          status: action, 
-          assignedCupo: manualCupo, 
-          assignedPlazo: manualPlazo 
-      };
-    });
-
-    setAnalyses(updatedAnalyses);
-    setSelectedAnalysis(fullUpdatedAnalysis);
-
-    // 3. PERSIST FULL JSON STATE (With AI Data)
-    if (fullUpdatedAnalysis.driveFolderUrl) {
-        // We don't await this to keep UI snappy, but it runs in background
-        saveAnalysisState(fullUpdatedAnalysis.driveFolderUrl, fullUpdatedAnalysis).catch(console.error);
-    }
-
-    // 4. IMMEDIATE SHEET UPDATE (Fire & Forget / Async)
+    // 2. IMMEDIATE SHEET UPDATE (Fire & Forget / Async)
     let detalleLog = "";
     if (action === 'APROBADO') {
         detalleLog = `Cupo: ${formatCOP(manualCupo || 0)} - Plazo: ${manualPlazo || 30} días`;
@@ -367,17 +370,50 @@ const App: React.FC = () => {
         detalleLog = "Solicitud Denegada";
     }
 
-    exportToDriveAndNotify({
-        action: 'UPDATE_SHEET',
-        logData: {
-        clientId: id,
-        clientName: fullUpdatedAnalysis.clientName,
-        nit: fullUpdatedAnalysis.nit,
-        comercialName: fullUpdatedAnalysis.comercial.name,
-        detalle: detalleLog,
-        estado: action
+    try {
+        await exportToDriveAndNotify({
+            action: 'UPDATE_SHEET',
+            logData: {
+                clientId: id,
+                clientName: fullUpdatedAnalysis.clientName,
+                nit: fullUpdatedAnalysis.nit,
+                comercialName: fullUpdatedAnalysis.comercial.name,
+                detalle: detalleLog,
+                estado: action,
+                lastUpdated: selectedAnalysis.lastUpdated // Version Check for Director
+            }
+        });
+
+        // 3. PERSIST FULL JSON STATE (With AI Data)
+        // If sheet update succeeded (no Stale Error), we proceed to save JSON
+        if (fullUpdatedAnalysis.driveFolderUrl) {
+            saveAnalysisState(fullUpdatedAnalysis.driveFolderUrl, fullUpdatedAnalysis).catch(console.error);
         }
-    }).catch(err => console.error("Failed to update sheet immediately:", err));
+
+        // 4. Update Local State (List View)
+        // We update the list with the summary info so the UI reflects the change immediately
+        const updatedAnalyses = analyses.map(a => {
+        if (a.id !== id) return a;
+        return { 
+            ...a, 
+            status: action, 
+            assignedCupo: manualCupo, 
+            assignedPlazo: manualPlazo 
+        };
+        });
+
+        setAnalyses(updatedAnalyses);
+        setSelectedAnalysis(fullUpdatedAnalysis);
+
+    } catch (err: any) {
+        if (err.name === 'StaleDataError') {
+             alert("⚠️ BLOQUEO DE SEGURIDAD: Otro usuario modificó este caso recientemente. No se pueden guardar sus cambios. La página se actualizará.");
+             setView('LIST');
+             hydrateData();
+        } else {
+             alert("Error guardando decisión: " + err.message);
+        }
+    }
   };
 
   if (!role) {
@@ -400,7 +436,7 @@ const App: React.FC = () => {
         <>
            <div className="flex justify-end mb-4 -mt-16 mr-20 relative z-30">
               <button 
-                onClick={hydrateData} 
+                onClick={() => hydrateData(false)} 
                 disabled={isSyncing}
                 className="flex items-center gap-2 px-3 py-2 bg-white rounded-lg text-xs font-bold text-slate-500 hover:text-equitel-red transition-colors shadow-sm"
               >

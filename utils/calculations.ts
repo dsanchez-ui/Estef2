@@ -66,12 +66,18 @@ export const calculateFullIndicators = (data: any): FinancialIndicators => {
     endeudamientoLP: (data.pasivosNoCorriente / data.assetsTotal) * 100,
     endeudamientoCP: (data.pasivosCorriente / data.pasivosTotal) * 100,
     solvencia: (data.patrimonioTotal / data.pasivosTotal) * 100,
+    apalancamientoFinanciero: data.assetsTotal / data.patrimonioTotal,
+    cargaFinanciera: (data.gastosFinancieros / data.ingresosTotales) * 100,
+    margenBruto: (data.utilidadBruta / data.ingresosTotales) * 100,
     margenNeto: (data.utilidadNeta / data.ingresosTotales) * 100,
     margenOperacional: (data.ebit / data.ingresosTotales) * 100,
+    margenContribucion: 0, // Fallback if unknown
     roa: (data.utilidadNeta / data.assetsTotal) * 100,
     roe: (data.utilidadNeta / data.patrimonioTotal) * 100,
     ebit: data.ebit,
     ebitda: data.ebitda || data.ebit * 1.1,
+    puntoEquilibrio: 0, // Fallback
+    rotacionActivos: data.ingresosTotales / data.assetsTotal,
     zAltman: zScore,
     riesgoInsolvencia: razonCorriente,
     deterioroPatrimonial: data.utilidadNeta < 0,

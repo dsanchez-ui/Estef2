@@ -41,6 +41,9 @@ export const generateWelcomeLetterHTML = (analysis: CreditAnalysis) => {
   const date = new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' });
   const cupo = analysis.assignedCupo || 0;
   
+  // Use selected company or default to Grupo Equitel
+  const senderCompany = analysis.empresa || "Grupo Equitel";
+  
   return `
     <html>
     <head>${BASE_STYLES}</head>
@@ -49,7 +52,7 @@ export const generateWelcomeLetterHTML = (analysis: CreditAnalysis) => {
       <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px;">
          <div>
             <div style="font-size: 20px; font-weight: 900; letter-spacing: -0.5px;">EQUITEL</div>
-            <div style="font-size: 9px; color: #666;">Organización Equitel S.A.</div>
+            <div style="font-size: 9px; color: #666;">${senderCompany}</div>
          </div>
          <div style="text-align:right; font-size: 11px;">
             <strong>Bogotá, ${date}</strong>
@@ -64,9 +67,9 @@ export const generateWelcomeLetterHTML = (analysis: CreditAnalysis) => {
       
       <p>Estimados señores:</p>
       
-      <p>Para <strong>Grupo Equitel</strong> es un gusto darles la bienvenida. Nos entusiasma ratificar nuestras condiciones comerciales y contar con aliados como ustedes para construir una relación sólida enfocada en el crecimiento mutuo.</p>
+      <p>Para <strong>${senderCompany}</strong> es un gusto darles la bienvenida. Nos entusiasma ratificar nuestras condiciones comerciales y contar con aliados como ustedes para construir una relación sólida enfocada en el crecimiento mutuo.</p>
       
-      <p>Queremos ser el respaldo que su operación necesita. Por ello, ponemos a su disposición toda nuestra asesoría técnica y el portafolio de nuestra división <strong>POTENCIA</strong>.</p>
+      <p>Queremos ser el respaldo que su operación necesita. Por ello, ponemos a su disposición toda nuestra asesoría técnica y el portafolio de nuestra división.</p>
       
       <div style="background-color: #f8fafc; padding: 15px; border-left: 4px solid #DA291C; margin: 15px 0; border-radius: 4px;">
         <table style="width: auto;">
@@ -130,6 +133,14 @@ export const generateCreditReportHTML = (analysis: CreditAnalysis, manualCupo: n
     
     const row = (label: string, value: string) => `<tr><td>${label}</td><td class="text-right font-bold">${value}</td></tr>`;
 
+    // Determine Z-Altman health text
+    let zAltmanStatus = "N/A";
+    if (ind.zAltman) {
+        if (ind.zAltman > 2.99) zAltmanStatus = "Zona Segura (Bajo Riesgo)";
+        else if (ind.zAltman > 1.81) zAltmanStatus = "Zona Gris (Riesgo Moderado)";
+        else zAltmanStatus = "Zona Alerta (Alto Riesgo)";
+    }
+
     return `
     <html>
     <head>${BASE_STYLES}</head>
@@ -155,10 +166,14 @@ export const generateCreditReportHTML = (analysis: CreditAnalysis, manualCupo: n
             <div>
                 <span class="info-label">Razón Social</span>
                 <span class="info-value" style="font-size: 14px;">${analysis.clientName}</span>
+                <span class="info-label" style="margin-top:5px;">Empresa Equitel</span>
+                <span class="info-value" style="font-size: 11px;">${analysis.empresa || "N/A"}</span>
             </div>
             <div style="text-align: right;">
                 <span class="info-label">NIT</span>
                 <span class="info-value" style="font-size: 14px;">${analysis.nit}</span>
+                <span class="info-label" style="margin-top:5px;">Unidad de Negocio</span>
+                <span class="info-value" style="font-size: 11px;">${analysis.unidadNegocio || "N/A"}</span>
             </div>
         </div>
 
@@ -206,7 +221,20 @@ export const generateCreditReportHTML = (analysis: CreditAnalysis, manualCupo: n
             </div>
         </div>
 
-        <div class="section-title">2. Cálculo de Cupo Sugerido (IA)</div>
+        <!-- NEW RISK SECTION FOR PDF -->
+        <div class="section-title">2. Análisis de Riesgo (Z-Altman)</div>
+        <div class="info-box" style="background-color: #f0fdf4; border-color: #bbf7d0;">
+            <div>
+                <span class="info-label">Z-Altman Score</span>
+                <span class="info-value" style="font-size: 18px; color: #166534;">${ind.zAltman?.toFixed(2) || "N/A"}</span>
+            </div>
+            <div style="text-align: right;">
+                <span class="info-label">Interpretación</span>
+                <span class="info-value" style="font-size: 12px; color: #166534;">${zAltmanStatus}</span>
+            </div>
+        </div>
+
+        <div class="section-title">3. Cálculo de Cupo Sugerido (IA)</div>
         <table>
             <thead>
                 <tr><th>Variable</th><th class="text-right">Valor</th></tr>
@@ -221,7 +249,7 @@ export const generateCreditReportHTML = (analysis: CreditAnalysis, manualCupo: n
             </tbody>
         </table>
 
-        <div class="section-title">3. Dictamen Final</div>
+        <div class="section-title">4. Dictamen Final</div>
         
         <div class="approval-box">
              <div style="display: flex; justify-content: space-between; align-items: flex-end;">

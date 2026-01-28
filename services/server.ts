@@ -5,6 +5,14 @@
  */
 const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz8Ji_EqvWmwf_fpVjMh0wF3BJp7hRPCC2iBMNZA5NcJ2cRSO3f4qbE9CIrkPj2jfOzfg/exec";
 
+// Custom Error Class for Stale Data
+export class StaleDataError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'StaleDataError';
+    }
+}
+
 /**
  * Envía el payload al backend de Google Apps Script.
  * @param {any} payload - El objeto completo con { datosCliente, archivos, analisis }.
@@ -30,16 +38,23 @@ export const saveAnalysisToCloud = async (payload: any): Promise<any> => {
     }
 
     const textResult = await response.text();
+    let result;
     try {
-      return JSON.parse(textResult);
+      result = JSON.parse(textResult);
     } catch (e) {
       console.warn("Respuesta no JSON del servidor:", textResult);
       return { success: true, raw: textResult };
     }
 
+    if (!result.success && result.isStaleData) {
+        throw new StaleDataError(result.error);
+    }
+    
+    return result;
+
   } catch (error) {
     console.error("Fallo en la comunicación con el servidor:", error);
-    throw error instanceof Error ? error : new Error(String(error));
+    throw error;
   }
 };
 
@@ -66,12 +81,14 @@ export const getAnalysesFromCloud = async (): Promise<any[]> => {
 };
 
 interface BackendActionPayload {
-  action: 'SAVE_REPORT' | 'SEND_EMAIL' | 'UPDATE_SHEET' | 'SAVE_STATE' | 'LOAD_STATE' | 'FETCH_FILES_FOR_AI';
+  action: 'SAVE_REPORT' | 'SEND_EMAIL' | 'UPDATE_SHEET' | 'SAVE_STATE' | 'LOAD_STATE' | 'FETCH_FILES_FOR_AI' | 'UPDATE_PIN' | 'CHECK_PIN';
   folderUrl?: string; 
   folderId?: string; 
   htmlContent?: string;
   fileName?: string;
   jsonData?: string; // For SAVE_STATE
+  newPin?: string; // For UPDATE_PIN
+  pin?: string; // For CHECK_PIN
   emailData?: {
     to: string;
     subject: string;
@@ -85,6 +102,7 @@ interface BackendActionPayload {
     comercialName?: string;
     detalle: string; // e.g., "Cupo Aprobado: $50M"
     estado: string; // e.g., "APROBADO"
+    lastUpdated?: number; // For Optimistic Locking
   };
 }
 
@@ -98,6 +116,10 @@ export const exportToDriveAndNotify = async (payload: BackendActionPayload): Pro
 
     const result = await response.json();
     if (!result.success) {
+        // Handle Optimistic Lock Error
+        if (result.isStaleData) {
+            throw new StaleDataError(result.error);
+        }
         // Safe fail for load action
         if (payload.action === 'LOAD_STATE') return { success: false, message: result.message || "No data" };
         throw new Error(result.error || "Error desconocido en backend");
@@ -106,6 +128,8 @@ export const exportToDriveAndNotify = async (payload: BackendActionPayload): Pro
     return { success: true, message: result.message, jsonContent: result.jsonContent, files: result.files };
   } catch (error: any) {
     console.error("Backend Action Failed:", error);
+    // Propagate StaleDataError
+    if (error.name === 'StaleDataError') throw error;
     return { success: false, message: error.message };
   }
 };
@@ -153,4 +177,26 @@ export const fetchProjectFiles = async (folderId: string) => {
       folderId: folderId
    });
    return result.files || [];
+};
+
+/**
+ * Updates the Director PIN in the backend
+ */
+export const updateRemotePIN = async (newPin: string): Promise<boolean> => {
+   const result = await exportToDriveAndNotify({
+      action: 'UPDATE_PIN',
+      newPin: newPin
+   });
+   return result.success;
+};
+
+/**
+ * Verifies the PIN against the backend
+ */
+export const verifyRemotePIN = async (pin: string): Promise<boolean> => {
+   const result = await exportToDriveAndNotify({
+      action: 'CHECK_PIN',
+      pin: pin
+   });
+   return result.success;
 };

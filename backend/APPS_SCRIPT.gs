@@ -2,7 +2,7 @@
 /**
  * ==========================================
  * ESTEFANÍA 2.0 - BACKEND GOOGLE APPS SCRIPT
- * MODO: UPSERT (ACTUALIZAR O INSERTAR) + NOTIFICACIONES AVANZADAS + LECTURA + PERSISTENCIA JSON + LECTURA BINARIA
+ * MODO: UPSERT + LOCKING + CONCURRENCY CONTROL + CC COMERCIAL
  * ==========================================
  */
 
@@ -23,16 +23,19 @@ const COLS = {
   CARGUE_INICIAL: 6,      // Detalle archivos comerciales
   CARGUE_RIESGO: 7,       // Detalle archivos riesgo
   APROBACION_CUPO: 8,     // Resultado final / Cupo / Plazo
-  CORREO_NOTIF: 9,        // Correos internos
-  CORREO_CLIENTE: 10,     // Correo externo (cliente final)
+  CORREO_NOTIF: 9,        // Correos internos (Cartera)
+  CORREO_COMERCIAL: 10,   // Nuevo: Correo del Asesor (CC)
   ESTADO: 11,
-  LINK_DRIVE: 12
+  LINK_DRIVE: 12,
+  ULTIMA_ACTUALIZACION: 13, // Timestamp para control de concurrencia
+  EMPRESA: 14,            // NUEVO: Empresa Equitel
+  UNIDAD_NEGOCIO: 15      // NUEVO: Unidad de Negocio
 };
 
 function doPost(e) {
   const lock = LockService.getScriptLock();
   try {
-    // Reducir tiempo de espera de lock para lecturas rápidas
+    // Bloqueo estricto: Solo una ejecución a la vez por 30 segundos
     lock.waitLock(30000); 
 
     if (!e || !e.postData || !e.postData.contents) {
@@ -46,7 +49,7 @@ function doPost(e) {
        return getAllApplications();
     }
 
-    // 2. ACCIONES ESPECÍFICAS (PDF, EMAIL, UPDATE, JSON STATE, FETCH_FILES)
+    // 2. ACCIONES ESPECÍFICAS
     if (data.backendAction) {
       return handleBackendAction(data.backendAction);
     }
@@ -60,9 +63,14 @@ function doPost(e) {
 
   } catch (error) {
     console.error("ERROR CRITICO DOPOST: " + error.toString());
+    // Retornamos un error JSON estructurado
+    const errorStr = error.toString();
+    const isStale = errorStr.includes("STALE_DATA");
+    
     return ContentService.createTextOutput(JSON.stringify({ 
       success: false, 
-      error: error.toString() 
+      error: errorStr,
+      isStaleData: isStale 
     })).setMimeType(ContentService.MimeType.JSON);
   } finally {
     lock.releaseLock();
@@ -81,9 +89,9 @@ function getAllApplications() {
       .setMimeType(ContentService.MimeType.JSON);
   }
 
-  // Leer todo el rango de datos (fila 2 hasta la última)
-  const range = sheet.getRange(2, 1, lastRow - 1, 12);
-  const values = range.getValues(); // Array de Arrays
+  // Leer todo el rango de datos (fila 2 hasta la última, hasta columna 15)
+  const range = sheet.getRange(2, 1, lastRow - 1, 15);
+  const values = range.getValues(); 
 
   // Mapear a objetos JSON ligeros
   const cleanData = values.map(row => ({
@@ -92,10 +100,13 @@ function getAllApplications() {
     clientName: row[COLS.RAZON_SOCIAL - 1],
     nit: row[COLS.NIT - 1],
     comercialName: row[COLS.COMERCIAL - 1],
+    comercialEmail: row[COLS.CORREO_COMERCIAL - 1], 
     status: row[COLS.ESTADO - 1],
     driveUrl: row[COLS.LINK_DRIVE - 1],
-    // Datos opcionales para reconstruir contexto visual en lista
-    cupoInfo: row[COLS.APROBACION_CUPO - 1]
+    cupoInfo: row[COLS.APROBACION_CUPO - 1],
+    lastUpdated: row[COLS.ULTIMA_ACTUALIZACION - 1] ? new Date(row[COLS.ULTIMA_ACTUALIZACION - 1]).getTime() : 0,
+    empresa: row[COLS.EMPRESA - 1] || "",
+    unidadNegocio: row[COLS.UNIDAD_NEGOCIO - 1] || ""
   })).filter(item => item.id && item.id !== ""); 
 
   return ContentService.createTextOutput(JSON.stringify({ 
@@ -105,7 +116,7 @@ function getAllApplications() {
 }
 
 /**
- * FUNCIÓN CORE: BUSCA Y ACTUALIZA O CREA NUEVA FILA
+ * FUNCIÓN CORE: BUSCA Y ACTUALIZA O CREA NUEVA FILA CON CONTROL DE CONCURRENCIA
  */
 function upsertRow(data) {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
@@ -129,14 +140,18 @@ function upsertRow(data) {
     const nextSequence = idsValues.length + 1;
     finalId = "SOL-" + ("000000" + nextSequence).slice(-6);
     
-    const newRow = new Array(12).fill(""); 
+    const newRow = new Array(15).fill(""); // Updated size to 15
     
     newRow[COLS.FECHA - 1] = new Date();
     newRow[COLS.ID_SOLICITUD - 1] = finalId;
     newRow[COLS.RAZON_SOCIAL - 1] = data.clientName || "";
     newRow[COLS.NIT - 1] = data.nit || "";
     newRow[COLS.COMERCIAL - 1] = data.comercial || "";
+    newRow[COLS.CORREO_COMERCIAL - 1] = data.comercialEmail || "";
     newRow[COLS.LINK_DRIVE - 1] = data.link || "";
+    newRow[COLS.ULTIMA_ACTUALIZACION - 1] = new Date(); 
+    newRow[COLS.EMPRESA - 1] = data.empresa || "";
+    newRow[COLS.UNIDAD_NEGOCIO - 1] = data.unidadNegocio || "";
     
     if (data.initialDetail) newRow[COLS.CARGUE_INICIAL - 1] = data.initialDetail;
     if (data.notifEmail) newRow[COLS.CORREO_NOTIF - 1] = data.notifEmail;
@@ -146,14 +161,32 @@ function upsertRow(data) {
     return finalId;
   } 
   
-  // 3. SI YA EXISTE -> ACTUALIZAR
+  // 3. SI YA EXISTE -> ACTUALIZAR (CON VALIDACIÓN DE VERSIÓN)
   else {
+    // A. OPTIMISTIC LOCKING CHECK
+    if (data.expectedVersion) {
+       const currentDbTimestamp = sheet.getRange(rowIndex, COLS.ULTIMA_ACTUALIZACION).getValue();
+       const dbTime = currentDbTimestamp ? new Date(currentDbTimestamp).getTime() : 0;
+       
+       const difference = Math.abs(dbTime - data.expectedVersion);
+       
+       if (dbTime > 0 && dbTime !== data.expectedVersion && difference > 5000) {
+           throw new Error("STALE_DATA: El registro ha sido modificado por otro usuario. Por favor actualice la página.");
+       }
+    }
+
+    // B. APPLY UPDATES
     if (data.riskDetail) sheet.getRange(rowIndex, COLS.CARGUE_RIESGO).setValue(data.riskDetail);
     if (data.cupoDetail) sheet.getRange(rowIndex, COLS.APROBACION_CUPO).setValue(data.cupoDetail);
-    if (data.notifEmail) sheet.getRange(rowIndex, COLS.CORREO_NOTIF).setValue(data.notifEmail);
-    if (data.clientEmail) sheet.getRange(rowIndex, COLS.CORREO_CLIENTE).setValue(data.clientEmail);
     if (data.estado) sheet.getRange(rowIndex, COLS.ESTADO).setValue(data.estado);
     if (data.clientName) sheet.getRange(rowIndex, COLS.RAZON_SOCIAL).setValue(data.clientName);
+    if (data.comercialEmail) sheet.getRange(rowIndex, COLS.CORREO_COMERCIAL).setValue(data.comercialEmail);
+    // Don't usually update Company/Unit after creation, but if provided, update:
+    if (data.empresa) sheet.getRange(rowIndex, COLS.EMPRESA).setValue(data.empresa);
+    if (data.unidadNegocio) sheet.getRange(rowIndex, COLS.UNIDAD_NEGOCIO).setValue(data.unidadNegocio);
+    
+    // C. UPDATE TIMESTAMP
+    sheet.getRange(rowIndex, COLS.ULTIMA_ACTUALIZACION).setValue(new Date());
     
     return finalId;
   }
@@ -196,8 +229,12 @@ function handleUploadAndLog(payload) {
       clientName: datosCliente.clientName,
       nit: datosCliente.nit,
       comercial: datosCliente.comercialNombre,
+      comercialEmail: datosCliente.comercialEmail,
+      empresa: datosCliente.empresa, // Guardar
+      unidadNegocio: datosCliente.unidadNegocio, // Guardar
       link: carpetaCliente.getUrl(),
-      estado: "PENDIENTE"
+      estado: "PENDIENTE",
+      expectedVersion: datosCliente.lastUpdated 
     };
 
     if (notificationType === 'COMERCIAL_UPLOAD') {
@@ -243,8 +280,21 @@ function handleBackendAction(data) {
   const result = { success: false, message: '' };
   
   try {
-    // === GUARDAR PDF EN DRIVE ===
-    if (data.action === 'SAVE_REPORT') {
+    if (data.action === 'UPDATE_SHEET') {
+       if (data.logData) {
+        upsertRow({
+          id: data.logData.clientId,
+          clientName: data.logData.clientName, 
+          cupoDetail: data.logData.detalle,   
+          estado: data.logData.estado,
+          expectedVersion: data.logData.lastUpdated 
+        });
+      }
+      result.success = true;
+      result.message = "Sheet actualizado";
+    }
+
+    else if (data.action === 'SAVE_REPORT') {
       let folder;
       if (data.folderId) { try { folder = DriveApp.getFolderById(data.folderId); } catch(e) {} }
       if (!folder && data.folderUrl) {
@@ -261,61 +311,45 @@ function handleBackendAction(data) {
       result.message = file.getUrl();
     } 
     
-    // === ENVIAR EMAIL ===
     else if (data.action === 'SEND_EMAIL') {
       const { to, subject, body } = data.emailData;
+      // Enviamos correo y agregamos CC si tenemos log data con el comercial
+      // NOTA: Para el correo final al cliente, no siempre copiamos al comercial, pero si se desea, se puede agregar aquí.
       MailApp.sendEmail({
         to: to,
         subject: subject,
         htmlBody: body,
         name: "Organización Equitel - Crédito y Cartera"
       });
+      
       if (data.logData) {
         upsertRow({
           id: data.logData.clientId,
           clientName: data.logData.clientName, 
           cupoDetail: data.logData.detalle,   
-          clientEmail: to,                    
+          // clientEmail: to, // No sobreescribimos la columna 10 que ahora es para el Comercial
           estado: data.logData.estado          
         });
       }
       result.success = true;
       result.message = "Enviado correctamente";
     }
-
-    // === ACTUALIZAR SHEET ===
-    else if (data.action === 'UPDATE_SHEET') {
-       if (data.logData) {
-        upsertRow({
-          id: data.logData.clientId,
-          clientName: data.logData.clientName, 
-          cupoDetail: data.logData.detalle,   
-          estado: data.logData.estado          
-        });
-      }
-      result.success = true;
-      result.message = "Sheet actualizado";
-    }
-
-    // === GUARDAR ESTADO COMPLETO (JSON) ===
+    
     else if (data.action === 'SAVE_STATE') {
        const folderUrl = data.folderUrl;
-       const jsonData = data.jsonData; // Stringified JSON
+       const jsonData = data.jsonData; 
        let folder;
        if (folderUrl) {
           const idMatch = folderUrl.match(/[-\w]{25,}/);
           if (idMatch) { try { folder = DriveApp.getFolderById(idMatch[0]); } catch(e) {} }
        }
-       
        if (folder) {
           const fileName = "estefania_data.json";
           const files = folder.getFilesByName(fileName);
           if (files.hasNext()) {
-             // Update existing
              const file = files.next();
              file.setContent(jsonData);
           } else {
-             // Create new
              folder.createFile(fileName, jsonData, MimeType.PLAIN_TEXT);
           }
           result.success = true;
@@ -325,7 +359,6 @@ function handleBackendAction(data) {
        }
     }
 
-    // === LEER ESTADO COMPLETO (JSON) ===
     else if (data.action === 'LOAD_STATE') {
        const folderUrl = data.folderUrl;
        let folder;
@@ -333,7 +366,6 @@ function handleBackendAction(data) {
           const idMatch = folderUrl.match(/[-\w]{25,}/);
           if (idMatch) { try { folder = DriveApp.getFolderById(idMatch[0]); } catch(e) {} }
        }
-
        if (folder) {
           const files = folder.getFilesByName("estefania_data.json");
           if (files.hasNext()) {
@@ -350,7 +382,6 @@ function handleBackendAction(data) {
        }
     }
 
-    // === NUEVO: RECUPERAR ARCHIVOS PARA IA (Base64) ===
     else if (data.action === 'FETCH_FILES_FOR_AI') {
        const folderId = data.folderId;
        const fetchedFiles = [];
@@ -363,10 +394,7 @@ function handleBackendAction(data) {
                 const name = file.getName().toUpperCase();
                 const mimeType = file.getMimeType();
                 const size = file.getSize();
-
-                // Filtrar solo archivos clave para no exceder límites de memoria/tiempo
-                // ESTADOS, RENTA, BANCARIA, CAMARA, COMERCIAL
-                if (size < 6000000 && ( // Max 6MB per file
+                if (size < 6000000 && ( 
                     name.includes("ESTADOS") || 
                     name.includes("RENTA") || 
                     name.includes("BANCARIA") ||
@@ -390,9 +418,25 @@ function handleBackendAction(data) {
           result.message = "No Folder ID provided";
        }
     }
+
+    else if (data.action === 'UPDATE_PIN') {
+       const props = PropertiesService.getScriptProperties();
+       props.setProperty('DIRECTOR_PIN', data.newPin);
+       result.success = true;
+       result.message = "PIN actualizado en servidor";
+    }
+
+    else if (data.action === 'CHECK_PIN') {
+       const props = PropertiesService.getScriptProperties();
+       const stored = props.getProperty('DIRECTOR_PIN') || '442502';
+       result.success = (String(data.pin) === String(stored));
+    }
     
   } catch (err) {
     result.error = err.toString();
+    if (err.toString().includes("STALE_DATA")) {
+        result.isStaleData = true;
+    }
   }
   
   return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
@@ -426,6 +470,9 @@ function enviarCorreoComercial(cliente, linkDrive, numArchivos, validacion) {
   const radicado = cliente.id || "PENDIENTE";
   const asunto = `Nueva Solicitud Crédito [${radicado}]: ${nombreCliente}`;
   
+  // LOGIC CHANGE: CC to Commercial Email
+  const ccEmail = cliente.comercialEmail || "";
+
   let checklistHtml = "";
   if (validacion && validacion.results) {
     checklistHtml += `<ul style="list-style: none; padding: 0; margin: 0;">`;
@@ -495,13 +542,22 @@ function enviarCorreoComercial(cliente, linkDrive, numArchivos, validacion) {
     </html>
   `;
 
-  MailApp.sendEmail({ to: EMAILS_NOTIFICACION, subject: asunto, htmlBody: htmlBody });
+  // Send with CC to commercial
+  MailApp.sendEmail({ 
+    to: EMAILS_NOTIFICACION, 
+    cc: ccEmail,
+    subject: asunto, 
+    htmlBody: htmlBody 
+  });
 }
 
 function enviarCorreoRiesgo(cliente, linkDrive, numArchivos) {
   const nombreCliente = cliente.clientName || "Cliente";
   const radicado = cliente.id || "N/A";
   const asunto = `⚠️ Actualización Riesgo [${radicado}]: ${nombreCliente}`;
+  
+  // LOGIC CHANGE: CC to Commercial Email
+  const ccEmail = cliente.comercialEmail || "";
 
   const htmlBody = `
     <!DOCTYPE html>
@@ -552,5 +608,11 @@ function enviarCorreoRiesgo(cliente, linkDrive, numArchivos) {
     </html>
   `;
 
-  MailApp.sendEmail({ to: EMAILS_NOTIFICACION, subject: asunto, htmlBody: htmlBody });
+  // Send with CC to commercial
+  MailApp.sendEmail({ 
+    to: EMAILS_NOTIFICACION, 
+    cc: ccEmail,
+    subject: asunto, 
+    htmlBody: htmlBody 
+  });
 }

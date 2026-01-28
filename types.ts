@@ -27,25 +27,40 @@ export interface ValidationResult {
 }
 
 export interface FinancialIndicators {
+  // Liquidez
   razonCorriente: number;
   pruebaAcida: number;
   knt: number;
+  
+  // Endeudamiento
   endeudamientoGlobal: number;
   endeudamientoLP: number;
   endeudamientoCP: number;
   solvencia: number;
-  margenNeto: number;
+  apalancamientoFinanciero: number; // NEW
+  cargaFinanciera: number; // NEW
+  
+  // Rentabilidad
+  margenBruto: number; // NEW
   margenOperacional: number;
+  margenNeto: number;
+  margenContribucion: number; // NEW
   roa: number;
   roe: number;
+  
+  // Operación
   ebit: number;
   ebitda: number;
-  zAltman: number;
-  riesgoInsolvencia: number;
-  deterioroPatrimonial: boolean;
+  puntoEquilibrio: number; // NEW
+  rotacionActivos: number; // NEW
   diasCartera: number;
   diasInventario: number;
   cicloOperacional: number;
+
+  // Riesgo
+  zAltman: number;
+  riesgoInsolvencia: number;
+  deterioroPatrimonial: boolean;
 }
 
 export interface CupoVariables {
@@ -72,6 +87,11 @@ export interface CreditAnalysis {
   clientName: string;
   nit: string;
   comercial: CommercialMember;
+  
+  // New Mandatory Fields
+  empresa?: string;
+  unidadNegocio?: string;
+
   date: string;
   status: AnalysisStatus;
   
@@ -82,6 +102,7 @@ export interface CreditAnalysis {
   // Commercial Data Bucket
   commercialFiles: {
     rut?: File | null;
+    debidaDiligencia?: File | null; // NEW: Mandatory first step
     estadosFinancieros?: File | null;
     camara?: File | null;
     referenciaComercial?: File | null;
@@ -106,6 +127,7 @@ export interface CreditAnalysis {
     justification: string;
     scoreProbability: number; // 0-1
     financialIndicators: FinancialIndicators;
+    financialIndicatorInterpretations?: { [key: string]: string }; // NEW: Interprets specifically
     flags: {
       green: string[];
       red: string[];
@@ -129,4 +151,7 @@ export interface CreditAnalysis {
   assignedCupo?: number;
   assignedPlazo?: number; // NEW: Stores the Director's final decision on payment terms
   rejectionReason?: string;
+
+  // Concurrency Control
+  lastUpdated?: number; // Timestamp from server to prevent race conditions
 }

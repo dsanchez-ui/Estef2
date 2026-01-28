@@ -1,8 +1,8 @@
 
 import React, { useState } from 'react';
 import { CreditAnalysis } from '../types';
-import { Settings, Lock, CheckCircle2, AlertCircle } from 'lucide-react';
-import { updateStoredPIN } from '../utils/security';
+import { Settings, Lock, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { updateRemotePIN } from '../services/server';
 
 interface DirectorDashboardProps {
   analyses: CreditAnalysis[];
@@ -21,27 +21,37 @@ const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
   // New PIN State
   const [newPin, setNewPin] = useState('');
   const [pinStatus, setPinStatus] = useState<{success: boolean, msg: string} | null>(null);
+  const [updatingPin, setUpdatingPin] = useState(false);
 
   // UPDATED FILTER: Include 'ANALIZADO' as it is waiting for Director decision
   const pending = analyses.filter(a => a.status === 'PENDIENTE_DIRECTOR' || a.status === 'ANALIZADO');
   const history = analyses.filter(a => a.status !== 'PENDIENTE_DIRECTOR' && a.status !== 'ANALIZADO' && a.status !== 'PENDIENTE_CARTERA');
 
-  const handleChangePin = () => {
+  const handleChangePin = async () => {
     if (newPin.length !== 6) {
         setPinStatus({ success: false, msg: "El PIN debe tener exactamente 6 dígitos." });
         return;
     }
     
-    const success = updateStoredPIN(newPin);
-    if (success) {
-        setPinStatus({ success: true, msg: "PIN actualizado correctamente." });
-        setNewPin('');
-        setTimeout(() => {
-            setShowSettings(false);
-            setPinStatus(null);
-        }, 2000);
-    } else {
-        setPinStatus({ success: false, msg: "Error al guardar. Use solo números." });
+    setUpdatingPin(true);
+    setPinStatus(null);
+    
+    try {
+        const success = await updateRemotePIN(newPin);
+        if (success) {
+            setPinStatus({ success: true, msg: "PIN actualizado correctamente en servidor." });
+            setNewPin('');
+            setTimeout(() => {
+                setShowSettings(false);
+                setPinStatus(null);
+            }, 2000);
+        } else {
+            setPinStatus({ success: false, msg: "Error al guardar en la nube." });
+        }
+    } catch (e) {
+        setPinStatus({ success: false, msg: "Error de conexión." });
+    } finally {
+        setUpdatingPin(false);
     }
   };
 
@@ -79,14 +89,16 @@ const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
                   maxLength={6}
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-lg font-mono text-white focus:ring-2 focus:ring-equitel-red outline-none tracking-[0.5em] text-center placeholder:tracking-normal placeholder:text-sm" 
                   placeholder="Nuevo PIN (6 dígitos)"
+                  disabled={updatingPin}
                 />
             </div>
             <button 
               onClick={handleChangePin}
-              disabled={newPin.length !== 6}
-              className="w-full md:w-auto px-8 py-3 bg-equitel-red rounded-xl font-bold text-xs uppercase hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={newPin.length !== 6 || updatingPin}
+              className="w-full md:w-auto px-8 py-3 bg-equitel-red rounded-xl font-bold text-xs uppercase hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
-              Actualizar
+              {updatingPin && <Loader2 className="animate-spin" size={14} />}
+              {updatingPin ? "Guardando..." : "Actualizar"}
             </button>
           </div>
           
@@ -98,7 +110,7 @@ const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
           )}
           
           <p className="text-[10px] text-slate-500 mt-4 border-t border-slate-800 pt-2">
-             Nota: Este PIN se guarda localmente en este navegador. Si borra la caché, volverá al PIN por defecto (442502).
+             Nota: Este PIN se guarda de forma segura en los servidores de la aplicación y será permanente para cualquier inicio de sesión.
           </p>
         </div>
       )}
