@@ -116,7 +116,7 @@ export interface CreditAnalysis {
   // Risk Data Bucket (Cartera)
   riskFiles: {
     datacredito?: File | null;
-    informa?: File | null;
+    informa?: File | null; // Explicitly optional/nullable
   };
 
   // AI Output (Populated only after Director triggers it)
@@ -151,6 +151,7 @@ export interface CreditAnalysis {
   assignedCupo?: number;
   assignedPlazo?: number; // NEW: Stores the Director's final decision on payment terms
   rejectionReason?: string;
+  decisionDate?: string; // NEW: Date when Approved or Rejected
 
   // Concurrency Control
   lastUpdated?: number; // Timestamp from server to prevent race conditions

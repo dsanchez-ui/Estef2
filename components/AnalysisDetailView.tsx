@@ -317,8 +317,8 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                       </h4>
                       <form onSubmit={handleSendRealEmail} className="space-y-3">
                         <input 
-                          type="email" 
-                          placeholder="correo@ejemplo.com" 
+                          type="text" 
+                          placeholder="correo1@equitel.com.co, correo2@cliente.com" 
                           className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm font-medium text-slate-900 placeholder:text-slate-400"
                           value={emailTo}
                           onChange={e => setEmailTo(e.target.value)}
@@ -378,8 +378,8 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
                         </h4>
                         <form onSubmit={handleSendRealEmail} className="flex gap-3 items-center">
                           <input 
-                            type="email" 
-                            placeholder="correo@ejemplo.com" 
+                            type="text" 
+                            placeholder="correo1@equitel.com.co, correo2@cliente.com" 
                             className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm font-medium text-slate-900"
                             value={emailTo}
                             onChange={e => setEmailTo(e.target.value)}
@@ -413,7 +413,6 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
               </h3>
               <FinancialIndicatorsTable 
                 indicators={analysis.indicators} 
-                interpretations={analysis.aiResult?.financialIndicatorInterpretations}
               />
             </div>
           )}
@@ -654,99 +653,162 @@ const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({ analysis, userR
   );
 };
 
-const FinancialIndicatorsTable = ({ indicators, interpretations, compact = false }: { indicators: FinancialIndicators, interpretations?: {[key: string]: string}, compact?: boolean }) => {
+// UPDATED: Replaced props 'interpretations' is no longer used for rows.
+const FinancialIndicatorsTable = ({ indicators, compact = false }: { indicators: FinancialIndicators, compact?: boolean }) => {
   const rowClass = compact ? "py-2 px-4" : "py-3 px-6";
   const textClass = compact ? "text-xs" : "text-sm";
   
   // Custom formatters for specific percent fields that AI now returns as 0-100 integers
   const formatPctVal = (val: number) => `${val.toFixed(2)}%`;
 
+  // Helper to define text based on indicator and handle 0 values
+  const getDefinition = (label: string, rawValue: number | boolean | undefined) => {
+     // 1. Regla del Cero (Strictly 0 and not a boolean/special case)
+     if (rawValue === 0 && typeof rawValue === 'number') {
+        return <span className="text-slate-400 italic text-[10px] font-medium bg-slate-100 px-2 py-1 rounded">⚠️ Dato no disponible / No calculable</span>;
+     }
+
+     // 2. Definitions Map (Standard Benchmarks)
+     const defs: Record<string, string> = {
+        "Razón Corriente": "Capacidad para cubrir deudas a corto plazo. Idealmente debe ser superior a 1.0x.",
+        "Prueba Ácida": "Capacidad de pago inmediata sin depender de la venta de inventarios. Ideal > 1.0x.",
+        "KNT (Capital de Trabajo)": "Dinero disponible para operar tras cubrir obligaciones de corto plazo.",
+        "Riesgo Insolvencia (Inv. Liquidez)": "Medida inversa a la liquidez. Un valor bajo es positivo.",
+        
+        "Nivel Endeudamiento Global": "Proporción de activos financiados por terceros. Se considera saludable < 70%.",
+        "Endeudamiento Corto Plazo": "Porcentaje de la deuda total que vence en menos de un año.",
+        "Endeudamiento Largo Plazo": "Porcentaje de la deuda estructurada a más de un año.",
+        "Solvencia (Pasivo/Patrimonio)": "Relación de respaldo patrimonial frente a las deudas totales.",
+        "Apalancamiento Financiero": "Grado en que la empresa se apoya en recursos externos para adquirir activos.",
+        "Carga Financiera": "Porcentaje de los ingresos destinado al pago de intereses/gastos financieros.",
+        
+        "Margen Bruto": "Beneficio directo tras descontar costos de venta.",
+        "Margen Operacional": "Rentabilidad de la operación principal antes de impuestos e intereses.",
+        "Margen Neto": "Utilidad final disponible para los accionistas por cada peso vendido.",
+        "Margen Contribución": "Excedente de ingresos para cubrir costos fijos y generar utilidad.",
+        "ROA (Activo)": "Eficiencia de los activos totales para generar utilidades.",
+        "ROE (Patrimonio)": "Rentabilidad del capital invertido por los accionistas.",
+        
+        "EBIT": "Beneficio antes de Intereses e Impuestos (Operativo).",
+        "EBITDA": "Beneficio bruto operativo antes de deducibles contables (Caja aproximada).",
+        "Punto de Equilibrio (Est.)": "Nivel de ventas mínimo requerido para no perder dinero.",
+        "Rotación Activos": "Eficiencia en el uso de activos para generar ventas (Veces al año).",
+        "Días Recuperación Cartera": "Tiempo promedio que tarda la empresa en cobrar a sus clientes.",
+        "Días Rotación Inventario": "Tiempo promedio que tarda la empresa en vender su inventario.",
+        "Ciclo Operacional": "Tiempo total desde la compra de inventario hasta el recaudo de cartera.",
+        
+        "Z-Altman Score": "Modelo predictivo de quiebra. Zona Segura > 2.99 | Zona Riesgo < 1.81.",
+        "Deterioro Patrimonial": "Indica si existen pérdidas acumuladas que erosionan el capital social."
+     };
+
+     return <span className="text-slate-500">{defs[label] || "Indicador financiero estandar."}</span>;
+  };
+
   const categories = [
     {
       title: "Liquidez",
-      interpKey: "liquidez",
       items: [
-        { label: "Razón Corriente", value: indicators.razonCorriente.toFixed(2) },
-        { label: "Prueba Ácida", value: indicators.pruebaAcida.toFixed(2) },
-        { label: "KNT (Capital de Trabajo)", value: formatCOP(indicators.knt) },
-        { label: "Riesgo Insolvencia (Inv. Liquidez)", value: indicators.riesgoInsolvencia.toFixed(2) },
+        { label: "Razón Corriente", value: indicators.razonCorriente.toFixed(2), raw: indicators.razonCorriente },
+        { label: "Prueba Ácida", value: indicators.pruebaAcida.toFixed(2), raw: indicators.pruebaAcida },
+        { label: "KNT (Capital de Trabajo)", value: formatCOP(indicators.knt), raw: indicators.knt },
+        { label: "Riesgo Insolvencia (Inv. Liquidez)", value: indicators.riesgoInsolvencia.toFixed(2), raw: indicators.riesgoInsolvencia },
       ]
     },
     {
       title: "Endeudamiento",
-      interpKey: "endeudamiento",
       items: [
-        { label: "Nivel Endeudamiento Global", value: formatPctVal(indicators.endeudamientoGlobal) },
-        { label: "Endeudamiento Corto Plazo", value: formatPctVal(indicators.endeudamientoCP) },
-        { label: "Endeudamiento Largo Plazo", value: formatPctVal(indicators.endeudamientoLP) },
-        { label: "Solvencia (Pasivo/Patrimonio)", value: formatPctVal(indicators.solvencia) },
-        { label: "Apalancamiento Financiero", value: indicators.apalancamientoFinanciero?.toFixed(2) || "N/A" },
-        { label: "Carga Financiera", value: formatPctVal(indicators.cargaFinanciera || 0) },
+        { label: "Nivel Endeudamiento Global", value: formatPctVal(indicators.endeudamientoGlobal), raw: indicators.endeudamientoGlobal },
+        { label: "Endeudamiento Corto Plazo", value: formatPctVal(indicators.endeudamientoCP), raw: indicators.endeudamientoCP },
+        { label: "Endeudamiento Largo Plazo", value: formatPctVal(indicators.endeudamientoLP), raw: indicators.endeudamientoLP },
+        { label: "Solvencia (Pasivo/Patrimonio)", value: formatPctVal(indicators.solvencia), raw: indicators.solvencia },
+        { label: "Apalancamiento Financiero", value: indicators.apalancamientoFinanciero?.toFixed(2) || "N/A", raw: indicators.apalancamientoFinanciero },
+        { label: "Carga Financiera", value: formatPctVal(indicators.cargaFinanciera || 0), raw: indicators.cargaFinanciera },
       ]
     },
     {
       title: "Rentabilidad & Márgenes",
-      interpKey: "rentabilidad",
       items: [
-        { label: "Margen Bruto", value: formatPctVal(indicators.margenBruto || 0) },
-        { label: "Margen Operacional", value: formatPctVal(indicators.margenOperacional) },
-        { label: "Margen Neto", value: formatPctVal(indicators.margenNeto) },
-        { label: "Margen Contribución", value: formatPctVal(indicators.margenContribucion || 0) },
-        { label: "ROA (Activo)", value: formatPctVal(indicators.roa) },
-        { label: "ROE (Patrimonio)", value: formatPctVal(indicators.roe) },
+        { label: "Margen Bruto", value: formatPctVal(indicators.margenBruto || 0), raw: indicators.margenBruto },
+        { label: "Margen Operacional", value: formatPctVal(indicators.margenOperacional), raw: indicators.margenOperacional },
+        { label: "Margen Neto", value: formatPctVal(indicators.margenNeto), raw: indicators.margenNeto },
+        { label: "Margen Contribución", value: formatPctVal(indicators.margenContribucion || 0), raw: indicators.margenContribucion },
+        { label: "ROA (Activo)", value: formatPctVal(indicators.roa), raw: indicators.roa },
+        { label: "ROE (Patrimonio)", value: formatPctVal(indicators.roe), raw: indicators.roe },
       ]
     },
     {
       title: "Operación & Eficiencia",
-      interpKey: "operacion",
       items: [
-        { label: "EBIT", value: formatCOP(indicators.ebit || 0) },
-        { label: "EBITDA", value: formatCOP(indicators.ebitda) },
-        { label: "Punto de Equilibrio (Est.)", value: formatCOP(indicators.puntoEquilibrio || 0) },
-        { label: "Rotación Activos", value: indicators.rotacionActivos?.toFixed(2) || "N/A" },
-        { label: "Días Recuperación Cartera", value: `${indicators.diasCartera.toFixed(0)} días` },
-        { label: "Días Rotación Inventario", value: `${indicators.diasInventario.toFixed(0)} días` },
-        { label: "Ciclo Operacional", value: `${indicators.cicloOperacional.toFixed(0)} días` },
+        { label: "EBIT", value: formatCOP(indicators.ebit || 0), raw: indicators.ebit },
+        { label: "EBITDA", value: formatCOP(indicators.ebitda), raw: indicators.ebitda },
+        { label: "Punto de Equilibrio (Est.)", value: formatCOP(indicators.puntoEquilibrio || 0), raw: indicators.puntoEquilibrio },
+        { label: "Rotación Activos", value: indicators.rotacionActivos?.toFixed(2) || "N/A", raw: indicators.rotacionActivos },
+        { label: "Días Recuperación Cartera", value: `${indicators.diasCartera.toFixed(0)} días`, raw: indicators.diasCartera },
+        { label: "Días Rotación Inventario", value: `${indicators.diasInventario.toFixed(0)} días`, raw: indicators.diasInventario },
+        { label: "Ciclo Operacional", value: `${indicators.cicloOperacional.toFixed(0)} días`, raw: indicators.cicloOperacional },
       ]
     },
     {
       title: "Riesgo",
-      interpKey: "zAltman",
       items: [
-         { label: "Z-Altman Score", value: indicators.zAltman?.toFixed(2) || "N/A" },
-         { label: "Deterioro Patrimonial", value: indicators.deterioroPatrimonial ? "SÍ (ALERTA)" : "NO" }
+         { label: "Z-Altman Score", value: indicators.zAltman?.toFixed(2) || "N/A", raw: indicators.zAltman },
+         { label: "Deterioro Patrimonial", value: indicators.deterioroPatrimonial ? "SÍ (ALERTA)" : "NO", raw: indicators.deterioroPatrimonial }
       ]
     }
   ];
 
   return (
     <div className={`overflow-hidden border border-slate-200 rounded-xl ${compact ? 'text-xs' : ''}`}>
-      <table className="w-full text-left border-collapse">
+      <table className="w-full text-left border-collapse table-fixed">
         <thead className="bg-slate-50 text-slate-800 font-bold uppercase text-[10px] print-force-bg-gray">
           <tr>
-            <th className={rowClass}>Categoría</th>
-            <th className={rowClass}>Indicador</th>
-            <th className={`${rowClass} text-right`}>Resultado (2024)</th>
-            <th className={`${rowClass} text-right`}>Interpretación</th>
+            <th className={`${rowClass} w-[20%]`}>Categoría</th>
+            <th className={`${rowClass} w-[25%]`}>Indicador</th>
+            <th className={`${rowClass} text-right w-[20%]`}>Resultado (2024)</th>
+            <th className={`${rowClass} text-left w-[35%]`}>Interpretación / Benchmark</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {categories.map((cat, idx) => (
             <React.Fragment key={idx}>
+              {/* Header Row for Category */}
+              <tr className="bg-slate-50/50">
+                  <td colSpan={4} className={`${rowClass} text-[10px] font-black uppercase text-slate-400 border-b border-slate-100 tracking-widest`}>
+                    {cat.title}
+                  </td>
+              </tr>
+              {/* Item Rows */}
               {cat.items.map((item, itemIdx) => (
                 <tr key={`${idx}-${itemIdx}`} className="hover:bg-slate-50/50">
-                  {itemIdx === 0 && (
-                    <td rowSpan={cat.items.length} className={`${rowClass} font-bold text-slate-400 border-r border-slate-100 bg-slate-50/20 align-top print-force-bg-gray`}>
-                      {cat.title}
-                    </td>
-                  )}
+                  {/* Empty cell for category column indentation/structure if needed, or we can shift logic. 
+                      Since we removed rowSpan, we can make the first column empty or use it for grouping.
+                      User asked to remove rowSpan. Let's make it cleaner:
+                      Actually, with the Category Header Row above, we can just merge the first column or leave it blank.
+                      Let's stick to the 4-column layout but put the category name in the first column ONLY on the first item, 
+                      but without rowSpan, it repeats or leaves empty.
+                      
+                      BETTER APPROACH for "No RowSpan": 
+                      Use a category header row (added above) and shift items.
+                      BUT the table header defines 4 columns.
+                      Let's put the Category Name in the first column for EVERY row but with lighter text, 
+                      OR leave it empty for subsequent rows.
+                      
+                      Let's follow standard accessible table design: Repeat category or use blank.
+                      I will leave the first column blank for non-first items to simulate grouping visually without rowSpan.
+                   */}
+                   
+                  <td className={`${rowClass} text-[10px] font-bold text-slate-400 border-r border-slate-50`}>
+                     {/* Only show category on first item of the group to mimic rowSpan visually without the tag */}
+                     {itemIdx === 0 ? cat.title : ''}
+                  </td>
+
                   <td className={`${rowClass} ${textClass} font-medium text-slate-700`}>{item.label}</td>
                   <td className={`${rowClass} ${textClass} font-bold text-slate-900 text-right`}>{item.value}</td>
-                  {itemIdx === 0 && (
-                     <td rowSpan={cat.items.length} className={`${rowClass} ${textClass} text-slate-500 text-right align-top italic`}>
-                        {interpretations?.[cat.interpKey] || "-"}
-                     </td>
-                  )}
+                  
+                  {/* New Individual Interpretation Column */}
+                  <td className={`${rowClass} ${textClass} text-left leading-tight`}>
+                     {getDefinition(item.label, item.raw)}
+                  </td>
                 </tr>
               ))}
             </React.Fragment>

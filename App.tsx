@@ -11,10 +11,11 @@ import PINModal from './components/PINModal';
 import SuccessView from './components/SuccessView';
 import { runFullCreditAnalysis } from './services/gemini';
 import { sendEmail } from './services/email';
-import { saveAnalysisToCloud, exportToDriveAndNotify, getAnalysesFromCloud, saveAnalysisState, loadAnalysisState, fetchProjectFiles, StaleDataError } from './services/server'; // Updated imports
-import { fileToBase64, redondearComercial, formatCOP } from './utils/calculations';
+import { saveAnalysisToCloud, exportToDriveAndNotify, getAnalysesFromCloud, saveAnalysisState, loadAnalysisState, fetchProjectFiles, StaleDataError, updateRemotePIN } from './services/server'; // Updated imports
+import { fileToBase64, redondearComercial, formatCOP, formatDate } from './utils/calculations';
 import CommercialDashboard from './components/CommercialDashboard';
-import { FileText, CheckCircle2, XCircle, Clock, AlertCircle, RefreshCw } from 'lucide-react';
+import { FileText, CheckCircle2, XCircle, Clock, AlertCircle, RefreshCw, Settings, Lock, Loader2 } from 'lucide-react';
+import { generateNotificationEmailHTML } from './utils/templates';
 
 // Global Loading Overlay Component
 const LoadingOverlay = ({ visible, message }: { visible: boolean, message: string }) => {
@@ -30,11 +31,17 @@ const LoadingOverlay = ({ visible, message }: { visible: boolean, message: strin
 
 const App: React.FC = () => {
   const [role, setRole] = useState<UserRole | null>(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>(''); // NEW: Track logged in user
   const [showPIN, setShowPIN] = useState(false);
   const [view, setView] = useState<'LIST' | 'NEW' | 'TASK' | 'DETAIL' | 'SUCCESS'>('LIST');
   const [successType, setSuccessType] = useState<'COMMERCIAL_CREATED' | 'CARTERA_UPDATED'>('COMMERCIAL_CREATED');
   const [analyses, setAnalyses] = useState<CreditAnalysis[]>([]); // Empty initially
   const [selectedAnalysis, setSelectedAnalysis] = useState<CreditAnalysis | null>(null);
+  
+  // Settings / Change PIN State for Analyst
+  const [showAnalystSettings, setShowAnalystSettings] = useState(false);
+  const [newAnalystPin, setNewAnalystPin] = useState('');
+  const [updatingPin, setUpdatingPin] = useState(false);
   
   // Consolidated Loading State
   const [globalLoading, setGlobalLoading] = useState(false);
@@ -77,10 +84,14 @@ const App: React.FC = () => {
           id: row.id,
           clientName: row.clientName,
           nit: row.nit,
-          comercial: { name: row.comercialName, email: '' }, // Email is transient in this view
-          date: new Date(row.date).toLocaleDateString(),
+          // UPDATED: Now mapping email properly from row.comercialEmail
+          comercial: { name: row.comercialName, email: row.comercialEmail || '' },
+          date: formatDate(row.date),
           status: row.status as any,
           driveFolderUrl: row.driveUrl,
+          empresa: row.empresa, // Map company info
+          unidadNegocio: row.unidadNegocio, // Map unit info
+          decisionDate: row.decisionDate ? formatDate(row.decisionDate) : undefined, // NEW: Map decision date
           // Empty buckets because files are not downloadable securely to browser memory
           // This relies on Cartera re-uploading risk files for AI, or AI logic adapting.
           commercialFiles: {}, 
@@ -125,7 +136,13 @@ const App: React.FC = () => {
                       ...fullData,
                       status: basicAnalysis.status, // Trust Sheet status
                       id: basicAnalysis.id, // Trust Sheet ID
-                      lastUpdated: basicAnalysis.lastUpdated // Keep latest timestamp for locking
+                      lastUpdated: basicAnalysis.lastUpdated, // Keep latest timestamp for locking
+                      decisionDate: basicAnalysis.decisionDate || fullData.decisionDate, // Trust Sheet Date if avail
+                      // Ensure Commercial Email is present if missing in JSON but present in Sheet
+                      comercial: { 
+                        ...fullData.comercial,
+                        email: basicAnalysis.comercial.email || fullData.comercial.email
+                      }
                   };
                   setSelectedAnalysis(merged);
               } else {
@@ -146,9 +163,13 @@ const App: React.FC = () => {
   };
 
   // Role Selection Logic
-  const handleRoleSelect = (r: UserRole) => {
-    if (r === UserRole.DIRECTOR) setShowPIN(true);
-    else setRole(r);
+  const handleRoleSelect = (r: UserRole, email?: string) => {
+    if (r === UserRole.DIRECTOR) {
+        setShowPIN(true);
+    } else {
+        setRole(r);
+        if (email) setCurrentUserEmail(email);
+    }
   };
 
   // 1. Comercial Flow: Submit New Request -> Cloud Upload -> Notification
@@ -181,6 +202,8 @@ const App: React.FC = () => {
           nit: newAnalysis.nit,
           comercialNombre: newAnalysis.comercial.name,
           comercialEmail: newAnalysis.comercial.email,
+          empresa: newAnalysis.empresa, // Save company info
+          unidadNegocio: newAnalysis.unidadNegocio, // Save unit info
           fecha: newAnalysis.date,
           estado: newAnalysis.status,
           lastUpdated: newAnalysis.lastUpdated // Versioning
@@ -338,6 +361,28 @@ const App: React.FC = () => {
     }
   };
 
+  const handleAnalystChangePin = async () => {
+      if (newAnalystPin.length !== 6) {
+          alert("El PIN debe tener 6 dígitos.");
+          return;
+      }
+      setUpdatingPin(true);
+      try {
+          const success = await updateRemotePIN(newAnalystPin, currentUserEmail);
+          if (success) {
+              alert("PIN actualizado exitosamente. Úselo en su próximo inicio de sesión.");
+              setNewAnalystPin('');
+              setShowAnalystSettings(false);
+          } else {
+              alert("Error actualizando PIN.");
+          }
+      } catch (e) {
+          alert("Error de conexión.");
+      } finally {
+          setUpdatingPin(false);
+      }
+  };
+
   // 3. Director Flow: Just Open (AI is already done)
   // This just uses handleSelectAnalysis logic now
 
@@ -349,13 +394,17 @@ const App: React.FC = () => {
         return;
     }
 
+    // 0. CAPTURE DECISION DATE
+    const decisionDate = formatDate(new Date());
+
     // 1. Create the fully enriched object to save to Drive
     const fullUpdatedAnalysis: CreditAnalysis = {
         ...selectedAnalysis, // Keep all deep data (AI, flags, etc.)
         status: action,
         assignedCupo: manualCupo,
         assignedPlazo: manualPlazo,
-        rejectionReason: reason
+        rejectionReason: reason,
+        decisionDate: decisionDate // Save to Object
     };
 
     if (fullUpdatedAnalysis.cupo && manualPlazo) {
@@ -384,13 +433,61 @@ const App: React.FC = () => {
             }
         });
 
-        // 3. PERSIST FULL JSON STATE (With AI Data)
+        // 3. NEW: SEND AUTOMATIC NOTIFICATION EMAIL TO COMMERCIAL
+        // We only try to send if we have an email address
+        if (fullUpdatedAnalysis.comercial.email) {
+            try {
+                const emailHtml = generateNotificationEmailHTML(fullUpdatedAnalysis, action, reason);
+                await exportToDriveAndNotify({
+                    action: 'SEND_EMAIL',
+                    emailData: {
+                        to: fullUpdatedAnalysis.comercial.email,
+                        subject: `Resultado Solicitud Crédito [${fullUpdatedAnalysis.id}]: ${fullUpdatedAnalysis.clientName}`,
+                        body: emailHtml
+                    },
+                    // Update logData again to ensure decision date is persisted if not caught above
+                    logData: {
+                        clientId: id,
+                        clientName: fullUpdatedAnalysis.clientName,
+                        nit: fullUpdatedAnalysis.nit,
+                        detalle: detalleLog,
+                        estado: action,
+                    }
+                });
+                
+                // CRITICAL: We need to trigger a sheet update specifically for the date if the email action didn't do it fully, 
+                // but we can piggyback on the UPDATE_SHEET call above. 
+                // Let's RE-CALL UPDATE_SHEET with the decisionDate in the logData
+                
+                 await exportToDriveAndNotify({
+                    action: 'UPDATE_SHEET',
+                    logData: {
+                        clientId: id,
+                        clientName: fullUpdatedAnalysis.clientName,
+                        nit: fullUpdatedAnalysis.nit,
+                        comercialName: fullUpdatedAnalysis.comercial.name,
+                        detalle: detalleLog,
+                        estado: action,
+                        lastUpdated: selectedAnalysis.lastUpdated,
+                        // @ts-ignore - We are extending the payload dynamically for the backend
+                        decisionDate: decisionDate
+                    }
+                });
+
+                console.log("Notificación automática enviada a:", fullUpdatedAnalysis.comercial.email);
+            } catch (emailErr) {
+                console.error("Error enviando notificación automática", emailErr);
+                // Non-blocking error
+            }
+        }
+
+        // 4. PERSIST FULL JSON STATE (With AI Data)
         // If sheet update succeeded (no Stale Error), we proceed to save JSON
         if (fullUpdatedAnalysis.driveFolderUrl) {
             saveAnalysisState(fullUpdatedAnalysis.driveFolderUrl, fullUpdatedAnalysis).catch(console.error);
         }
 
-        // 4. Update Local State (List View)
+        // 5. Update Local State (List View)
         // We update the list with the summary info so the UI reflects the change immediately
         const updatedAnalyses = analyses.map(a => {
         if (a.id !== id) return a;
@@ -398,7 +495,8 @@ const App: React.FC = () => {
             ...a, 
             status: action, 
             assignedCupo: manualCupo, 
-            assignedPlazo: manualPlazo 
+            assignedPlazo: manualPlazo,
+            decisionDate: decisionDate 
         };
         });
 
@@ -428,7 +526,12 @@ const App: React.FC = () => {
   const visibleAnalyses = analyses;
 
   return (
-    <Layout role={role} onReset={() => { setRole(null); setView('LIST'); }}>
+    <Layout 
+      role={role} 
+      currentView={view}
+      onNavigate={(v) => setView(v)}
+      onReset={() => { setRole(null); setView('LIST'); setCurrentUserEmail(''); }}
+    >
       
       <LoadingOverlay visible={globalLoading} message={loadingMessage} />
 
@@ -460,7 +563,46 @@ const App: React.FC = () => {
                     <h2 className="text-3xl font-black text-slate-900 tracking-tight">Gestión Cartera</h2>
                     <p className="text-slate-500">Administración de expedientes y análisis de riesgo</p>
                   </div>
+                  
+                  {/* NEW: Analyst Change PIN Button */}
+                  <button 
+                    onClick={() => setShowAnalystSettings(!showAnalystSettings)}
+                    className="p-3 bg-white border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition-colors"
+                    title="Configuración de Cuenta"
+                  >
+                    <Settings size={20} />
+                  </button>
                 </div>
+
+                {/* Analyst Settings Panel */}
+                {showAnalystSettings && (
+                    <div className="bg-slate-900 text-white p-6 rounded-3xl animate-in slide-in-from-top-4 shadow-xl border border-slate-800 mb-6">
+                        <h3 className="font-bold text-sm uppercase mb-4 flex items-center gap-2 text-slate-200">
+                            <Lock size={16} /> Cambiar PIN de Acceso ({currentUserEmail})
+                        </h3>
+                        <div className="flex flex-col md:flex-row gap-4 items-start md:items-center">
+                            <div className="flex-1 w-full">
+                                <input 
+                                    type="password"
+                                    value={newAnalystPin}
+                                    onChange={(e) => setNewAnalystPin(e.target.value.replace(/\D/g, ''))}
+                                    maxLength={6}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-lg font-mono text-white focus:ring-2 focus:ring-equitel-red outline-none tracking-[0.5em] text-center placeholder:tracking-normal placeholder:text-sm" 
+                                    placeholder="Nuevo PIN (6 dígitos)"
+                                    disabled={updatingPin}
+                                />
+                            </div>
+                            <button 
+                                onClick={handleAnalystChangePin}
+                                disabled={newAnalystPin.length !== 6 || updatingPin}
+                                className="w-full md:w-auto px-8 py-3 bg-equitel-red rounded-xl font-bold text-xs uppercase hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            >
+                                {updatingPin && <Loader2 className="animate-spin" size={14} />}
+                                {updatingPin ? "Guardando..." : "Actualizar"}
+                            </button>
+                        </div>
+                    </div>
+                )}
 
                 {/* 1. TAREAS PENDIENTES */}
                 <div className="space-y-4">
@@ -513,6 +655,7 @@ const App: React.FC = () => {
                             <th className="px-6 py-4">Cliente</th>
                             <th className="px-6 py-4">Estado</th>
                             <th className="px-6 py-4">Resultado</th>
+                            <th className="px-6 py-4">Fecha Decisión</th>
                             <th className="px-6 py-4 text-center">Detalle</th>
                           </tr>
                         </thead>
@@ -538,13 +681,16 @@ const App: React.FC = () => {
                                    {a.status === 'APROBADO' ? `Cupo: ${formatCOP(a.assignedCupo || 0)}` : 
                                     a.status === 'NEGADO' ? 'Rechazado' : 'En Proceso'}
                                 </td>
+                                <td className="px-6 py-4 text-xs text-slate-500">
+                                   {a.decisionDate || '-'}
+                                </td>
                                 <td className="px-6 py-4 text-center">
                                    <FileText size={16} className="text-slate-400 mx-auto" />
                                 </td>
                              </tr>
                            ))}
                            {visibleAnalyses.filter(a => a.status !== 'PENDIENTE_CARTERA').length === 0 && (
-                             <tr><td colSpan={5} className="py-8 text-center text-xs text-slate-400">No hay historial disponible.</td></tr>
+                             <tr><td colSpan={6} className="py-8 text-center text-xs text-slate-400">No hay historial disponible.</td></tr>
                            )}
                         </tbody>
                      </table>

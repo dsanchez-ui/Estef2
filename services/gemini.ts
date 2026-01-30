@@ -24,7 +24,7 @@ const fileToPart = async (file: File | { name: string, inlineData: { data: strin
       if (!result) {
         resolve(null);
         return;
-      }
+    }
       const base64String = result.split(',')[1];
       resolve({
         inlineData: {
@@ -269,10 +269,24 @@ export const validateSingleDocument = async (
     if (expectedType === 'BANCARIA' && diffDays > 60) return { isValid: false, msg: `❌ Vencido hace ${diffDays - 60} días (>60)` };
     if (expectedType === 'REFERENCIA' && diffDays > 90) return { isValid: false, msg: `❌ Vencido hace ${diffDays - 90} días (>90)` };
     
+    // UPDATED DATE LOGIC FOR FINANCIALS
     if (expectedType === 'FINANCIEROS' || expectedType === 'RENTA') {
-        const minValidYear = currentYear - 1;
+        const currentMonth = now.getMonth(); // 0 = Enero, 4 = Mayo, 5 = Junio
+        // Regla: Enero a Mayo (<= 4) se permite año - 1 y año - 2.
+        // Regla: Junio en adelante (>= 5) se exige mínimo año - 1.
+        
+        const isEarlyYear = currentMonth <= 4;
+        const minValidYear = isEarlyYear ? currentYear - 2 : currentYear - 1;
+
         if (docYear < minValidYear) {
-            return { isValid: false, msg: `❌ Año ${docYear} vencido. Se requiere ${minValidYear} o ${currentYear}.` };
+            const periodMsg = isEarlyYear 
+                ? `(Enero-Mayo se acepta hasta ${currentYear - 2})` 
+                : `(Desde Junio se requiere mínimo ${currentYear - 1})`;
+            
+            return { 
+                isValid: false, 
+                msg: `❌ Año ${docYear} vencido. ${periodMsg}` 
+            };
         }
     }
 
@@ -313,6 +327,20 @@ export const runFullCreditAnalysis = async (allFiles: (File | { name: string, in
 
   3. **CAPITAL NETO DE TRABAJO (KNT):** Activo Corriente - Pasivo Corriente (Moneda Completa).
 
+  4. **💰 EXTRACCIÓN DE VALORES MONETARIOS (MUY IMPORTANTE):**
+     - **Detecta la escala:** Busca en los encabezados "(Miles de $)", "(Miles de millones)". 
+     - Si dice "Miles de $", multiplica el valor visible por 1.000.
+     - Si dice "Miles de Millones", multiplica por 1.000.000.000.
+     - **DATACRÉDITO:**
+       - Revisa la tabla "SALDOS, CUPOS Y VALORES".
+       - Para calcular el promedio, **FILTRA Y USA SOLO** las obligaciones del **SECTOR REAL** (Proveedores, Alimentos, Industria, Telecomunicaciones).
+       - **IGNORA** obligaciones del **SECTOR FINANCIERO** (Bancos, Leasing, Fiducias, Carteras Colectivas) para el cálculo de promedio, ya que sus cupos masivos distorsionan la capacidad comercial real.
+       - Si no hay Sector Real, usa 0.
+     - **INFORMA COLOMBIA:**
+       - Busca explícitamente "Opinión de Crédito" o "Recomendación Máxima".
+     - **OTORGA:**
+       - Si encuentras un "Score OtorgA" (ej. 2, 500, etc.), NO alucines un valor monetario. Si no existe una línea que diga "Cupo Sugerido OtorgA: $XXX", devuelve 0.
+
   ### 📄 ESTRUCTURA OBLIGATORIA DEL CONCEPTO IA ("justification")
   
   Debes generar un texto formateado ESTRICTAMENTE con esta estructura (usa emojis y saltos de línea \\n):
@@ -344,11 +372,11 @@ export const runFullCreditAnalysis = async (allFiles: (File | { name: string, in
 
   ### CÁLCULO DE CUPO SUGERIDO (REGLA 6 VARIABLES)
   Calcula el promedio de:
-  1. Datacrédito (Ponderado 10%)
-  2. OtorgA (Directo)
-  3. Informa (Ponderado 10%)
+  1. Datacrédito (Promedio de 3 cupos más altos del SECTOR REAL * 10%)
+  2. OtorgA (Solo si es valor monetario explícito, sino 0)
+  3. Informa (Opinión de Crédito * 10%)
   4. Utilidad Neta Mensual
-  5. Promedio Referencias
+  5. Promedio Referencias (Cartas adjuntas)
   6. Cupo Mensual Operativo ((EBITDA - Impuestos - Gastos + Efectivo)/24)
 
   ### SALIDA JSON
@@ -370,8 +398,8 @@ export const runFullCreditAnalysis = async (allFiles: (File | { name: string, in
           cupoVariables: {
             type: Type.OBJECT,
             properties: {
-              v1_datacredito_avg: { type: Type.NUMBER },
-              v1_weighted: { type: Type.NUMBER },
+              v1_datacredito_avg: { type: Type.NUMBER, description: "Promedio Base Sector Real" },
+              v1_weighted: { type: Type.NUMBER, description: "10% del Promedio Base" },
               v2_otorga: { type: Type.NUMBER },
               v3_informa_max: { type: Type.NUMBER },
               v3_weighted: { type: Type.NUMBER },

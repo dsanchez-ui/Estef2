@@ -7,6 +7,7 @@ import {
 import { extractIdentityFromRUT, validateSingleDocument } from '../services/gemini';
 import PINModal from './PINModal';
 import { EQUITEL_COMPANIES, BUSINESS_UNITS } from '../constants';
+import { formatDate } from '../utils/calculations';
 
 interface NewAnalysisFlowProps {
   onComplete: (analysis: CreditAnalysis) => Promise<void>; 
@@ -82,6 +83,8 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
     if (!file) return;
     setFiles(prev => ({ ...prev, rut: file }));
     setExtractingId(true);
+    setErrorMsg(null); // Reset global error
+
     try {
       const data = await extractIdentityFromRUT(file);
       if (data.razonSocial || data.nit) {
@@ -95,11 +98,31 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
       // Perform standard validation check for RUT type too
       setFileValidation(prev => ({ ...prev, rut: { checking: true, valid: null } }));
       const val = await validateSingleDocument(file, 'RUT');
+      
+      // Check for technical error in validation to clear file
+      if (!val.isValid && (val.msg?.toLowerCase().includes('técnico') || val.msg?.toLowerCase().includes('error'))) {
+          setFiles(prev => ({ ...prev, rut: null })); // Clear to allow retry
+          setFileValidation(prev => ({ ...prev, rut: { checking: false, valid: false, msg: val.msg } }));
+          return;
+      }
+
       setFileValidation(prev => ({ ...prev, rut: { checking: false, valid: val.isValid, msg: val.msg } }));
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error extracting identity from RUT", error);
-      setFileValidation(prev => ({ ...prev, rut: { checking: false, valid: false, msg: "Error lectura RUT" } }));
+      
+      // CRITICAL: Clear file to allow retry
+      setFiles(prev => ({ ...prev, rut: null }));
+      
+      let msg = "Error lectura RUT. Intente de nuevo.";
+      const errString = JSON.stringify(error) + (error.message || "");
+      
+      if (errString.includes("503") || errString.includes("overloaded")) {
+          msg = "⚠️ Servicio IA saturado (503). Por favor cargue el archivo nuevamente.";
+      }
+
+      setFileValidation(prev => ({ ...prev, rut: { checking: false, valid: false, msg: msg } }));
+      setErrorMsg(msg); // Show global error for visibility
     } finally {
       setExtractingId(false);
     }
@@ -129,15 +152,29 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
         
         const result = await validateSingleDocument(file, expectedType, context);
         
+        // CRITICAL: If technical error, clear file to allow retry
+        if (!result.isValid && (result.msg?.toLowerCase().includes('técnico') || result.msg?.toLowerCase().includes('error'))) {
+             setFiles(prev => ({ ...prev, [key]: null }));
+        }
+
         setFileValidation(prev => ({ 
             ...prev, 
             [key]: { checking: false, valid: result.isValid, msg: result.msg } 
         }));
 
-    } catch (e) {
+    } catch (e: any) {
+        // Safety catch for validation errors
+        setFiles(prev => ({ ...prev, [key]: null }));
+        
+        let msg = "Error al validar.";
+        const errString = JSON.stringify(e) + (e.message || "");
+        if (errString.includes("503") || errString.includes("overloaded")) {
+            msg = "⚠️ Servicio IA saturado (503). Suba nuevamente.";
+        }
+
         setFileValidation(prev => ({ 
             ...prev, 
-            [key]: { checking: false, valid: false, msg: "Error al validar" } 
+            [key]: { checking: false, valid: false, msg: msg } 
         }));
     }
   };
@@ -191,7 +228,7 @@ const NewAnalysisFlow: React.FC<NewAnalysisFlowProps> = ({ onComplete, onCancel 
       comercial: comercialMember,
       empresa: form.empresa, 
       unidadNegocio: form.unidadNegocio, 
-      date: new Date().toLocaleDateString(),
+      date: formatDate(new Date()),
       status: 'PENDIENTE_CARTERA',
       commercialFiles: files,
       riskFiles: { datacredito: null, informa: null },

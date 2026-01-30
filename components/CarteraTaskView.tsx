@@ -22,7 +22,8 @@ const CarteraTaskView: React.FC<CarteraTaskViewProps> = ({ analysis, onAdvance, 
     informa: analysis.riskFiles?.informa || null
   });
 
-  const canAdvance = !!(riskFiles.datacredito && riskFiles.informa);
+  // UPDATED: Only DataCredito is mandatory now. Informa is optional.
+  const canAdvance = !!riskFiles.datacredito;
 
   // Helper to get list of files from Metadata (Validation Result) instead of Memory (commercialFiles)
   const commercialFileList = analysis.validationResult?.results || [];
@@ -35,20 +36,24 @@ const CarteraTaskView: React.FC<CarteraTaskViewProps> = ({ analysis, onAdvance, 
         setValidatingIdentity(true);
         setIdentityError(null);
         try {
-            // Check DataCredito
-            const dcCheck = await validateDocIdentity(riskFiles.datacredito!, analysis.clientName);
-            if (!dcCheck.isValid) {
-                setIdentityError(`Datacrédito: ${dcCheck.reason}`);
-                setValidatingIdentity(false);
-                return;
+            // Check DataCredito (Mandatory)
+            if (riskFiles.datacredito) {
+                const dcCheck = await validateDocIdentity(riskFiles.datacredito, analysis.clientName);
+                if (!dcCheck.isValid) {
+                    setIdentityError(`Datacrédito: ${dcCheck.reason}`);
+                    setValidatingIdentity(false);
+                    return;
+                }
             }
 
-            // Check Informa
-            const infCheck = await validateDocIdentity(riskFiles.informa!, analysis.clientName);
-            if (!infCheck.isValid) {
-                setIdentityError(`Informa: ${infCheck.reason}`);
-                setValidatingIdentity(false);
-                return;
+            // Check Informa (Optional - Only validate if present)
+            if (riskFiles.informa) {
+                const infCheck = await validateDocIdentity(riskFiles.informa, analysis.clientName);
+                if (!infCheck.isValid) {
+                    setIdentityError(`Informa: ${infCheck.reason}`);
+                    setValidatingIdentity(false);
+                    return;
+                }
             }
 
         } catch (e) {
@@ -118,12 +123,12 @@ const CarteraTaskView: React.FC<CarteraTaskViewProps> = ({ analysis, onAdvance, 
            
            <div className="space-y-4">
              <RiskFileDrop 
-               label="Informe DataCrédito" 
+               label="Informe DataCrédito (Obligatorio)" 
                file={riskFiles.datacredito} 
                onSelect={(f: File) => setRiskFiles({...riskFiles, datacredito: f})} 
              />
              <RiskFileDrop 
-               label="Informe Informa Colombia" 
+               label="Informe Informa Colombia (Opcional)" 
                file={riskFiles.informa} 
                onSelect={(f: File) => setRiskFiles({...riskFiles, informa: f})} 
              />

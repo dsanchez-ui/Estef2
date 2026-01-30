@@ -1,6 +1,6 @@
 
 import { CreditAnalysis, FinancialIndicators } from '../types';
-import { formatCOP, formatPercent, numberToLetters } from './calculations';
+import { formatCOP, formatPercent, numberToLetters, formatDate } from './calculations';
 
 // Optimized CSS for Single Page Fitting (A4/Letter)
 const BASE_STYLES = `
@@ -127,8 +127,103 @@ Departamento de Cartera
 Organización Equitel S.A.`;
 };
 
+// NEW: Rich HTML Notification for Commercial Advisors
+export const generateNotificationEmailHTML = (analysis: CreditAnalysis, status: 'APROBADO' | 'NEGADO', reason?: string) => {
+  const isApproved = status === 'APROBADO';
+  const color = isApproved ? '#16a34a' : '#dc2626'; // Green vs Red
+  const title = isApproved ? 'Solicitud Aprobada' : 'Solicitud Denegada';
+  const icon = isApproved ? '✅' : '🚫';
+  
+  // Link to App (replace with your actual deployed URL if static)
+  const APP_URL = "https://aistudio.google.com/app/u/0/apps/drive/13su0xNJT9YRG-oRxzvZg---Jm6FD2oih?showAssistant=true&showPreview=true&fullscreenApplet=true";
+
+  let detailsHtml = '';
+
+  if (isApproved) {
+      detailsHtml = `
+        <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 15px; margin: 15px 0;">
+            <p style="margin: 0 0 5px 0; font-size: 10px; text-transform: uppercase; color: #166534; font-weight: bold;">Cupo Otorgado</p>
+            <p style="margin: 0 0 10px 0; font-size: 20px; font-weight: 900; color: #166534;">${formatCOP(analysis.assignedCupo || 0)}</p>
+            
+            <p style="margin: 0 0 5px 0; font-size: 10px; text-transform: uppercase; color: #166534; font-weight: bold;">Plazo de Pago</p>
+            <p style="margin: 0; font-size: 16px; font-weight: bold; color: #14532d;">${analysis.assignedPlazo || 30} Días</p>
+        </div>
+      `;
+  } else {
+      detailsHtml = `
+        <div style="background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 15px; margin: 15px 0;">
+            <p style="margin: 0 0 5px 0; font-size: 10px; text-transform: uppercase; color: #991b1b; font-weight: bold;">Motivo de Rechazo</p>
+            <p style="margin: 0; font-size: 13px; color: #7f1d1d; line-height: 1.4;">${reason || analysis.rejectionReason || "Políticas internas."}</p>
+        </div>
+      `;
+  }
+
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 20px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .header { background-color: ${color}; padding: 30px 20px; text-align: center; color: white; }
+        .content { padding: 30px; }
+        .btn { display: inline-block; padding: 12px 24px; border-radius: 8px; font-weight: bold; text-decoration: none; font-size: 14px; margin-right: 10px; }
+        .btn-primary { background-color: #000; color: #fff; }
+        .btn-secondary { background-color: #e5e7eb; color: #374151; }
+        .info-row { display: flex; justify-content: space-between; border-bottom: 1px solid #f3f4f6; padding: 8px 0; }
+        .info-label { font-size: 11px; color: #6b7280; font-weight: bold; text-transform: uppercase; }
+        .info-val { font-size: 12px; color: #111827; font-weight: bold; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+           <h1 style="margin: 0; font-size: 24px; font-weight: 900; letter-spacing: -0.5px;">${title}</h1>
+           <p style="margin: 5px 0 0 0; opacity: 0.9; font-size: 14px;">Solicitud ${analysis.id}</p>
+        </div>
+        <div class="content">
+          <p style="margin-bottom: 20px; font-size: 14px; color: #374151;">
+            Hola <strong>${analysis.comercial.name}</strong>, el proceso de análisis de crédito ha finalizado. A continuación los detalles:
+          </p>
+
+          <div style="background-color: #f9fafb; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+             <div class="info-row">
+                <span class="info-label">Cliente</span>
+                <span class="info-val">${analysis.clientName}</span>
+             </div>
+             <div class="info-row">
+                <span class="info-label">NIT</span>
+                <span class="info-val">${analysis.nit}</span>
+             </div>
+             <div class="info-row">
+                <span class="info-label">Empresa Equitel</span>
+                <span class="info-val">${analysis.empresa || "N/A"}</span>
+             </div>
+             <div class="info-row" style="border-bottom: none;">
+                <span class="info-label">Unidad Negocio</span>
+                <span class="info-val">${analysis.unidadNegocio || "N/A"}</span>
+             </div>
+          </div>
+
+          ${detailsHtml}
+          
+          <div style="margin-top: 25px; text-align: center;">
+             <a href="${analysis.driveFolderUrl}" class="btn btn-secondary">📂 Ver Carpeta Drive</a>
+             <a href="${APP_URL}" class="btn btn-primary">📱 Ir al Aplicativo</a>
+          </div>
+        </div>
+        <div style="background-color: #f9fafb; padding: 20px; text-align: center; color: #9ca3af; font-size: 11px; border-top: 1px solid #e5e7eb;">
+           &copy; 2025 Organización Equitel S.A.
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+};
+
 export const generateCreditReportHTML = (analysis: CreditAnalysis, manualCupo: number, manualPlazo: number) => {
-    const date = new Date().toLocaleDateString();
+    const date = formatDate(new Date());
     const ind = analysis.indicators || {} as FinancialIndicators;
     
     const row = (label: string, value: string) => `<tr><td>${label}</td><td class="text-right font-bold">${value}</td></tr>`;

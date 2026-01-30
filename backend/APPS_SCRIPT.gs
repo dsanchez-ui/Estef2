@@ -29,7 +29,8 @@ const COLS = {
   LINK_DRIVE: 12,
   ULTIMA_ACTUALIZACION: 13, // Timestamp para control de concurrencia
   EMPRESA: 14,            // NUEVO: Empresa Equitel
-  UNIDAD_NEGOCIO: 15      // NUEVO: Unidad de Negocio
+  UNIDAD_NEGOCIO: 15,     // NUEVO: Unidad de Negocio
+  FECHA_DECISION: 16      // NUEVO: Fecha Aprobación/Negación
 };
 
 function doPost(e) {
@@ -89,8 +90,8 @@ function getAllApplications() {
       .setMimeType(ContentService.MimeType.JSON);
   }
 
-  // Leer todo el rango de datos (fila 2 hasta la última, hasta columna 15)
-  const range = sheet.getRange(2, 1, lastRow - 1, 15);
+  // Leer todo el rango de datos (fila 2 hasta la última, hasta columna 16)
+  const range = sheet.getRange(2, 1, lastRow - 1, 16);
   const values = range.getValues(); 
 
   // Mapear a objetos JSON ligeros
@@ -106,7 +107,8 @@ function getAllApplications() {
     cupoInfo: row[COLS.APROBACION_CUPO - 1],
     lastUpdated: row[COLS.ULTIMA_ACTUALIZACION - 1] ? new Date(row[COLS.ULTIMA_ACTUALIZACION - 1]).getTime() : 0,
     empresa: row[COLS.EMPRESA - 1] || "",
-    unidadNegocio: row[COLS.UNIDAD_NEGOCIO - 1] || ""
+    unidadNegocio: row[COLS.UNIDAD_NEGOCIO - 1] || "",
+    decisionDate: row[COLS.FECHA_DECISION - 1] || "" // Mapear nueva columna
   })).filter(item => item.id && item.id !== ""); 
 
   return ContentService.createTextOutput(JSON.stringify({ 
@@ -140,7 +142,7 @@ function upsertRow(data) {
     const nextSequence = idsValues.length + 1;
     finalId = "SOL-" + ("000000" + nextSequence).slice(-6);
     
-    const newRow = new Array(15).fill(""); // Updated size to 15
+    const newRow = new Array(16).fill(""); // Updated size to 16 for Decision Date
     
     newRow[COLS.FECHA - 1] = new Date();
     newRow[COLS.ID_SOLICITUD - 1] = finalId;
@@ -156,6 +158,7 @@ function upsertRow(data) {
     if (data.initialDetail) newRow[COLS.CARGUE_INICIAL - 1] = data.initialDetail;
     if (data.notifEmail) newRow[COLS.CORREO_NOTIF - 1] = data.notifEmail;
     if (data.estado) newRow[COLS.ESTADO - 1] = data.estado;
+    if (data.decisionDate) newRow[COLS.FECHA_DECISION - 1] = data.decisionDate;
 
     sheet.appendRow(newRow);
     return finalId;
@@ -184,6 +187,9 @@ function upsertRow(data) {
     // Don't usually update Company/Unit after creation, but if provided, update:
     if (data.empresa) sheet.getRange(rowIndex, COLS.EMPRESA).setValue(data.empresa);
     if (data.unidadNegocio) sheet.getRange(rowIndex, COLS.UNIDAD_NEGOCIO).setValue(data.unidadNegocio);
+    
+    // GUARDAR FECHA DECISIÓN
+    if (data.decisionDate) sheet.getRange(rowIndex, COLS.FECHA_DECISION).setValue(data.decisionDate);
     
     // C. UPDATE TIMESTAMP
     sheet.getRange(rowIndex, COLS.ULTIMA_ACTUALIZACION).setValue(new Date());
@@ -287,7 +293,8 @@ function handleBackendAction(data) {
           clientName: data.logData.clientName, 
           cupoDetail: data.logData.detalle,   
           estado: data.logData.estado,
-          expectedVersion: data.logData.lastUpdated 
+          expectedVersion: data.logData.lastUpdated,
+          decisionDate: data.logData.decisionDate // Guardar fecha
         });
       }
       result.success = true;
@@ -313,8 +320,6 @@ function handleBackendAction(data) {
     
     else if (data.action === 'SEND_EMAIL') {
       const { to, subject, body } = data.emailData;
-      // Enviamos correo y agregamos CC si tenemos log data con el comercial
-      // NOTA: Para el correo final al cliente, no siempre copiamos al comercial, pero si se desea, se puede agregar aquí.
       MailApp.sendEmail({
         to: to,
         subject: subject,
@@ -327,8 +332,8 @@ function handleBackendAction(data) {
           id: data.logData.clientId,
           clientName: data.logData.clientName, 
           cupoDetail: data.logData.detalle,   
-          // clientEmail: to, // No sobreescribimos la columna 10 que ahora es para el Comercial
-          estado: data.logData.estado          
+          estado: data.logData.estado,
+          decisionDate: data.logData.decisionDate 
         });
       }
       result.success = true;
@@ -419,17 +424,51 @@ function handleBackendAction(data) {
        }
     }
 
+    // UPDATE PIN (HANDLES BOTH DIRECTOR AND ANALYST)
     else if (data.action === 'UPDATE_PIN') {
        const props = PropertiesService.getScriptProperties();
-       props.setProperty('DIRECTOR_PIN', data.newPin);
+       const emailInput = data.email || "";
+       const cleanEmail = emailInput.trim().toLowerCase();
+       
+       // Lógica Unificada: Si es jcampos o no hay email (Director Directo), usa DIRECTOR_PIN
+       const isDirectorOrSuperUser = (cleanEmail === "" || cleanEmail === "jcampos@equitel.com.co");
+       
+       if (isDirectorOrSuperUser) {
+          props.setProperty('DIRECTOR_PIN', data.newPin);
+       } else {
+          // Es otro analista de cartera
+          const key = 'PIN_' + cleanEmail;
+          props.setProperty(key, data.newPin);
+       }
+       
        result.success = true;
        result.message = "PIN actualizado en servidor";
     }
 
+    // CHECK PIN (HANDLES BOTH DIRECTOR AND ANALYST)
     else if (data.action === 'CHECK_PIN') {
        const props = PropertiesService.getScriptProperties();
-       const stored = props.getProperty('DIRECTOR_PIN') || '442502';
-       result.success = (String(data.pin) === String(stored));
+       const emailInput = data.email || "";
+       const cleanEmail = emailInput.trim().toLowerCase();
+       
+       const isDirectorOrSuperUser = (cleanEmail === "" || cleanEmail === "jcampos@equitel.com.co");
+       
+       let stored;
+       let defaultPin;
+
+       if (isDirectorOrSuperUser) {
+          // Director PIN logic
+          stored = props.getProperty('DIRECTOR_PIN');
+          defaultPin = '442502'; // Default Director / JCampos
+       } else {
+          // Normal Analyst logic
+          const key = 'PIN_' + cleanEmail;
+          stored = props.getProperty(key);
+          defaultPin = '123456'; // Default Cartera
+       }
+
+       const activePin = stored || defaultPin;
+       result.success = (String(data.pin) === String(activePin));
     }
     
   } catch (err) {

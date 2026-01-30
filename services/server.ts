@@ -89,6 +89,7 @@ interface BackendActionPayload {
   jsonData?: string; // For SAVE_STATE
   newPin?: string; // For UPDATE_PIN
   pin?: string; // For CHECK_PIN
+  email?: string; // NEW: For User-Specific PINs
   emailData?: {
     to: string;
     subject: string;
@@ -180,23 +181,25 @@ export const fetchProjectFiles = async (folderId: string) => {
 };
 
 /**
- * Updates the Director PIN in the backend
+ * Updates the PIN in the backend (Director or Analyst via email)
  */
-export const updateRemotePIN = async (newPin: string): Promise<boolean> => {
+export const updateRemotePIN = async (newPin: string, email?: string): Promise<boolean> => {
    const result = await exportToDriveAndNotify({
       action: 'UPDATE_PIN',
-      newPin: newPin
+      newPin: newPin,
+      email: email
    });
    return result.success;
 };
 
 /**
- * Verifies the PIN against the backend
+ * Verifies the PIN against the backend (Director or Analyst via email)
  */
-export const verifyRemotePIN = async (pin: string): Promise<boolean> => {
+export const verifyRemotePIN = async (pin: string, email?: string): Promise<boolean> => {
    const result = await exportToDriveAndNotify({
       action: 'CHECK_PIN',
-      pin: pin
+      pin: pin,
+      email: email
    });
    return result.success;
 };

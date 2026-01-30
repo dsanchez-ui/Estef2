@@ -176,6 +176,14 @@ const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
         <h3 className="font-bold text-slate-400 uppercase text-xs mb-4 ml-2">Historial Reciente</h3>
         <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden">
           <table className="w-full text-left">
+             <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-400">
+              <tr>
+                <th className="px-6 py-4">Cliente</th>
+                <th className="px-6 py-4">Solicitud</th>
+                <th className="px-6 py-4">Fecha Decisión</th>
+                <th className="px-6 py-4 text-right">Estado</th>
+              </tr>
+            </thead>
             <tbody className="divide-y divide-slate-100">
               {history.map(a => (
                 <tr key={a.id} className="hover:bg-slate-50" onClick={() => onSelect(a)}>
@@ -184,6 +192,7 @@ const DirectorDashboard: React.FC<DirectorDashboardProps> = ({
                     {a.clientName}
                   </td>
                   <td className="px-6 py-4 text-sm text-slate-400">{a.date}</td>
+                  <td className="px-6 py-4 text-sm font-bold text-slate-500">{a.decisionDate || '-'}</td>
                   <td className="px-6 py-4 text-right">
                     <StatusBadge status={a.status} />
                   </td>

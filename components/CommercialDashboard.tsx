@@ -88,6 +88,7 @@ const CommercialDashboard: React.FC<CommercialDashboardProps> = ({ analyses, onN
                 <th className="px-6 py-4">Fecha</th>
                 <th className="px-6 py-4">Cliente</th>
                 <th className="px-6 py-4">Cupo</th>
+                <th className="px-6 py-4">Fecha Decisión</th>
                 <th className="px-6 py-4">Estado</th>
                 <th className="px-6 py-4 text-center">Acción</th>
               </tr>
@@ -113,6 +114,9 @@ const CommercialDashboard: React.FC<CommercialDashboardProps> = ({ analyses, onN
                      a.status === 'NEGADO' ? formatCOP(0) : 
                      <span className="text-slate-400 italic font-medium">En Estudio</span>}
                   </td>
+                  <td className="px-6 py-4 text-sm font-medium text-slate-600">
+                    {a.decisionDate || "-"}
+                  </td>
                   <td className="px-6 py-4">
                     <StatusBadge status={a.status} />
                   </td>
@@ -125,7 +129,7 @@ const CommercialDashboard: React.FC<CommercialDashboardProps> = ({ analyses, onN
               ))}
               {analyses.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-20 text-center text-slate-400">
+                  <td colSpan={7} className="py-20 text-center text-slate-400">
                     <div className="flex flex-col items-center gap-4">
                       <FileText size={48} className="text-slate-200" />
                       <p>No has realizado ninguna solicitud aún.</p>

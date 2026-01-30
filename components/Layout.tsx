@@ -1,11 +1,13 @@
 
 import React, { useState } from 'react';
 import { UserRole } from '../types';
-import { LogOut, LayoutDashboard, FilePlus, ShieldCheck, Menu, X } from 'lucide-react';
+import { LogOut, LayoutDashboard, FilePlus, ShieldCheck, Menu, X, FolderOpen, List } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
   role: UserRole;
+  currentView: string;
+  onNavigate: (view: any) => void;
   onReset: () => void;
 }
 
@@ -39,7 +41,7 @@ const LogoSVG = ({ className = "w-full h-full", color = "currentColor" }: { clas
   </svg>
 );
 
-const Layout: React.FC<LayoutProps> = ({ children, role, onReset }) => {
+const Layout: React.FC<LayoutProps> = ({ children, role, currentView, onNavigate, onReset }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
   const getUserProfile = () => {
@@ -57,6 +59,11 @@ const Layout: React.FC<LayoutProps> = ({ children, role, onReset }) => {
 
   const userProfile = getUserProfile();
 
+  // Helper styles for active/inactive buttons
+  const baseBtn = "w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition-all";
+  const activeBtn = "bg-equitel-red text-white shadow-lg shadow-red-900/20";
+  const inactiveBtn = "text-gray-400 hover:bg-gray-900 hover:text-white";
+
   const SidebarContent = () => (
     <>
       <div className="p-8 border-b border-gray-900">
@@ -69,16 +76,47 @@ const Layout: React.FC<LayoutProps> = ({ children, role, onReset }) => {
       </div>
 
       <nav className="flex-1 p-4 space-y-2 mt-4">
-        {role === UserRole.DIRECTOR && (
-           <button className="w-full flex items-center gap-3 px-4 py-3 bg-equitel-red rounded-xl font-bold text-sm shadow-lg shadow-red-900/20 hover:bg-red-700 transition-all text-white">
-             <LayoutDashboard size={18} />
-             <span>Dashboard</span>
+        {/* LOGIC FOR COMERCIAL */}
+        {role === UserRole.COMERCIAL && (
+          <>
+            <button 
+                onClick={() => onNavigate('LIST')}
+                className={`${baseBtn} ${currentView !== 'NEW' ? activeBtn : inactiveBtn}`}
+            >
+              <List size={18} />
+              <span>Mis Solicitudes</span>
+            </button>
+            <button 
+                onClick={() => onNavigate('NEW')}
+                className={`${baseBtn} ${currentView === 'NEW' ? activeBtn : inactiveBtn}`}
+            >
+              <FilePlus size={18} />
+              <span>Nueva Solicitud</span>
+            </button>
+          </>
+        )}
+
+        {/* LOGIC FOR CARTERA */}
+        {role === UserRole.CARTERA && (
+           <button 
+                onClick={() => onNavigate('LIST')}
+                className={`${baseBtn} ${activeBtn}`} // Always active as it's the main view for Cartera
+           >
+             <FolderOpen size={18} />
+             <span>Gestión Solicitudes</span>
            </button>
         )}
-        <button className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition-all ${role === UserRole.CARTERA ? 'bg-equitel-red text-white' : 'text-gray-400 hover:bg-gray-900 hover:text-white'}`}>
-          <FilePlus size={18} />
-          <span>{role === UserRole.CARTERA ? 'Nueva Solicitud' : 'Estudios'}</span>
-        </button>
+
+        {/* LOGIC FOR DIRECTOR */}
+        {role === UserRole.DIRECTOR && (
+           <button 
+                onClick={() => onNavigate('LIST')}
+                className={`${baseBtn} ${activeBtn}`} // Always active as it's the main dashboard for Director
+           >
+             <LayoutDashboard size={18} />
+             <span>Tablero de Control</span>
+           </button>
+        )}
       </nav>
 
       <div className="p-6 border-t border-gray-900 bg-gray-950">
